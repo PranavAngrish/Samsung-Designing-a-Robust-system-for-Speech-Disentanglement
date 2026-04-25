@@ -1,4 +1,4 @@
-# SoloSpeak — Implementation Reference v2
+# SoloSpeak — Implementation Reference v2.4
 
 **Purpose.** This document is the single, authoritative source of truth for building SoloSpeak end-to-end. It encodes every architectural decision as a concrete, ordered build sequence: every file path, every function signature, every test, every acceptance criterion.
 
@@ -9,6 +9,36 @@
 - Copy-paste-ready templates are marked `[TEMPLATE]`.
 - Decision points are marked `[DECISION]` with the chosen option and reasoning.
 - Where v1 referenced an external "architecture document," v2 inlines the relevant content. The reference is now self-contained.
+
+**Migration rule for existing old-code repos.**
+This document supersedes all earlier code and docs. If an existing repository contains
+older choices that conflict with this reference (for example `matchboxnet`, 1.5 s audio
+windows, hardcoded backbone channel maps, variable-length inference, or TARGET-only
+GO/NO-GO gates), migrate the code to this document rather than preserving backward
+compatibility. Backward-compatible aliases are allowed only when explicitly listed here
+(for example `BCResNet = SoloSpeakResNet`).
+
+**Migration preflight for old-code repos.** Before implementing new behavior, remove or
+rewrite stale files that directly contradict this reference:
+
+- Delete `configs/backbone/matchboxnet.yaml` and
+  `solospeak/models/backbones/matchboxnet.py` unless they are moved to a clearly marked
+  research-only branch outside the shipping package.
+- Rewrite `solospeak/utils/config.py` to the schema in 0.2.3: 1.6 s windows,
+  `Field(default_factory=...)` nested defaults, injected class counts, and no
+  `matchboxnet` variant.
+- Rewrite `solospeak/training/stages/base.py` to the two-threshold MIN/TARGET API in
+  3.1.1 and Appendix B. Old single-threshold `go_no_go_*` fields are not compatible.
+- Rewrite `configs/eval/full_kpi_suite.yaml` so aspirational values such as
+  `ta_clean_min: 0.99`, `fa_per_hour_max: 1.0`, and `xrt_int8_max: 0.08` are not hard
+  gates. The hard gates are the `ValidationGates` values in Appendix C.
+- Run `rg "matchboxnet|window_duration_s: 1.5|ta_clean_min: 0.99|xrt_int8_max: 0.08|go_no_go_threshold"`
+  and resolve every hit before starting model/training work.
+
+For existing old-code repositories, this migration preflight is a Phase-0 acceptance
+gate. Do not begin feature implementation until every hit has either been removed or
+rewritten to the v2.4 contract. For a greenfield repo the command should simply return no
+matches.
 
 **Document conventions.**
 - `🔴 BLOCKING` — must work before moving forward.
@@ -119,6 +149,7 @@ solospeak/
 │   │   └── combined.py
 │   ├── training/
 │   │   ├── __init__.py
+│   │   ├── training_wrapper.py          # training-only aux/adversarial heads
 │   │   ├── stages/
 │   │   │   ├── __init__.py
 │   │   │   ├── base.py
@@ -158,7 +189,8 @@ solospeak/
 │   ├── security/
 │   │   ├── __init__.py
 │   │   ├── replay_eval.py
-│   │   └── adversarial_eval.py
+│   │   ├── adversarial_eval.py
+│   │   └── threat_model.py
 │   ├── observability/
 │   │   ├── __init__.py
 │   │   ├── metrics.py
@@ -183,6 +215,7 @@ solospeak/
 │   │   ├── test_features.py
 │   │   ├── test_augmentation.py
 │   │   ├── test_splits.py
+│   │   ├── test_solospeak.py
 │   │   ├── test_enrollment.py
 │   │   ├── test_inference.py
 │   │   └── test_deployment.py
@@ -192,9 +225,11 @@ solospeak/
 │       ├── test_eval_smoke.py
 │       └── test_onnx_roundtrip.py
 ├── scripts/
+│   ├── __init__.py                       # required: makes scripts/ a Python package for -m and entry points
 │   ├── download_datasets.py
 │   ├── prepare_libriphrase.py
 │   ├── prepare_manifests.py
+│   ├── pack_audio_lmdb.py
 │   ├── precompute_speaker_embeddings.py
 │   ├── run_stage.py
 │   ├── run_eval.py
@@ -208,7 +243,9 @@ solospeak/
 │   ├── reproducibility.md
 │   ├── threat_model.md
 │   ├── fairness_report.md
-│   └── deployment_guide.md
+│   ├── ops_runbook.md
+│   ├── deployment_guide.md
+│   └── api_reference.md
 ├── pyproject.toml
 ├── requirements.txt
 ├── requirements-dev.txt
@@ -243,6 +280,7 @@ authors = [{name = "Pranav Angrish", email = "pangrish_be22@thapar.edu"}]
 
 dependencies = [
     "torch==2.3.1",
+    "torchaudio==2.3.1",    # must match torch minor version; SpeechBrain imports torchaudio
     "numpy==1.26.4",
     "scipy==1.13.1",
     "librosa==0.10.2",
@@ -258,7 +296,7 @@ dependencies = [
     "scikit-learn==1.5.0",
     "wandb==0.17.0",
     "g2p-en==2.1.0",
-    "speechbrain==1.0.0",   # for ECAPA-TDNN speaker embeddings
+    "speechbrain==1.0.3",   # for ECAPA-TDNN speaker embeddings
 ]
 
 [project.optional-dependencies]
@@ -274,7 +312,7 @@ dev = [
 ]
 tts = [
     "transformers==4.41.0",
-    "parler-tts==0.2.1",
+    "parler-tts==0.2.3",
 ]
 demo = [
     "sounddevice==0.4.6",    # CLI demo microphone input
@@ -284,6 +322,10 @@ demo = [
 solospeak-train = "scripts.run_stage:main"
 solospeak-eval = "scripts.run_eval:main"
 solospeak-export = "scripts.export_and_validate:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["solospeak*", "scripts*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -306,6 +348,11 @@ strict = true
 ignore_missing_imports = true
 ```
 
+**Python version rule.** Use Python 3.10 or 3.11 for all reproducible runs. The pinned
+dependency set is not guaranteed on Python 3.12+, so do not widen `requires-python` until
+`make install-dev && make test` and the ONNX/export dependencies have been validated on
+the newer interpreter.
+
 **Optional dependency rule.** The `tts` and `demo` extras are intentionally not installed
 in CI by default. Modules under `solospeak/enrollment/tts_augmentation.py` MUST import
 Parler-TTS and Transformers lazily inside the function that uses them. The CLI demo MUST
@@ -316,7 +363,7 @@ import `sounddevice` lazily inside `main()`. Tests requiring optional extras are
 #### `Makefile` [TEMPLATE]
 
 ```makefile
-.PHONY: install install-dev install-optional test test-unit test-integration test-slow test-all test-optional lint typecheck docs-check format clean
+.PHONY: install install-dev install-optional test test-unit test-integration test-slow test-all test-optional lint typecheck docs-check format download-data download-data-smoke prepare-manifests prepare-manifests-smoke pack-lmdb precompute-speaker-embeds eval ablation export clean
 
 install:
 	pip install -e .
@@ -370,6 +417,9 @@ prepare-manifests:
 prepare-manifests-smoke:
 	python -m scripts.prepare_manifests --smoke
 
+pack-lmdb:
+	python -m scripts.pack_audio_lmdb
+
 precompute-speaker-embeds:
 	python -m scripts.precompute_speaker_embeddings
 
@@ -389,6 +439,65 @@ clean:
 	find . -type d -name __pycache__ -exec rm -rf {} +
 	find . -type f -name "*.pyc" -delete
 	rm -rf build/ dist/ *.egg-info
+```
+
+#### `requirements.txt` and `requirements-dev.txt` [NOTE]
+
+Both files are listed in the scaffold for tooling compatibility (e.g. `pip install -r requirements.txt` without setuptools). They are **thin redirects to `pyproject.toml`** — do NOT duplicate pinned versions here, as that creates a maintenance conflict.
+
+`requirements.txt`:
+```
+# Install the package with all runtime dependencies (pins come from pyproject.toml).
+-e .
+```
+
+`requirements-dev.txt`:
+```
+# Install the package with all dev dependencies (pins come from pyproject.toml).
+-e .[dev]
+```
+
+#### `Dockerfile` [TEMPLATE]
+
+```dockerfile
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# System deps for soundfile / scipy and the Makefile entry point
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    make \
+    libsndfile1 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY pyproject.toml ./
+COPY README.md LICENSE Makefile ./
+COPY solospeak/ ./solospeak/
+COPY configs/ ./configs/
+COPY scripts/ ./scripts/
+COPY tests/ ./tests/
+
+RUN pip install --no-cache-dir -e ".[dev]"
+
+CMD ["make", "test"]
+```
+
+#### `.pre-commit-config.yaml` [TEMPLATE]
+
+```yaml
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.4.4
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.10.0
+    hooks:
+      - id: mypy
+        args: [--ignore-missing-imports]
+        additional_dependencies: [pydantic==2.7.1, torch==2.3.1]
 ```
 
 #### `.github/workflows/ci.yml` [TEMPLATE]
@@ -422,6 +531,10 @@ jobs:
         run: mypy solospeak
       - name: Unit tests
         run: pytest tests/unit -v -m "not slow and not data and not tts and not demo" --cov=solospeak --cov-report=xml
+      - name: Prepare smoke data
+        run: |
+          python -m scripts.download_datasets --minimal
+          python -m scripts.prepare_manifests --smoke
       - name: Integration smoke tests
         run: pytest tests/integration -v -m "not slow and not data and not tts and not demo"
 ```
@@ -466,6 +579,9 @@ Apache-2.0
 
 - 🧪 Clone to empty machine, run `make install-dev && make test`. Exit code 0. This is a
   Phase-0-safe check: unit/import/fixture tests only, no real datasets or checkpoints.
+- 🧪 Existing old-code repos pass the migration preflight from the front matter: no
+  product-path hits for `matchboxnet`, 1.5 s windows, TARGET-only eval hard gates, or old
+  single-threshold `go_no_go_*` stage APIs.
 - 🧪 `make test-all` is allowed to require downloaded data, checkpoints, or long-running
   integration resources.
 - 🧪 CI green on `main`.
@@ -504,11 +620,31 @@ AudioWaveform: TypeAlias = torch.Tensor      # (B, T) or (T,), float32, [-1, 1]
 MelSpectrogram: TypeAlias = torch.Tensor     # (B, 1, F=80, T'), float32
 Embedding128:  TypeAlias = torch.Tensor      # (B, 128), float32, L2-normalized
 
+# Typed aliases — required by mypy strict mode; avoids bare `dict` annotations.
+DatasetValue: TypeAlias = torch.Tensor | np.ndarray | str | int | float | bool | None
+DatasetItem: TypeAlias = dict[str, DatasetValue]      # one row emitted by __getitem__()
+BatchValue: TypeAlias = torch.Tensor | list[str] | list[int] | list[float] | list[bool]
+BatchDict: TypeAlias = dict[str, BatchValue]          # collated batch keyed by field name
+StageBatch: TypeAlias = dict[str, BatchDict]          # e.g. {"content": ..., "speaker": ...}
+LossDict: TypeAlias = dict[str, torch.Tensor]         # keyed by loss component name
+MetricsDict: TypeAlias = dict[str, float]             # keyed by metric name
+SubgroupDict: TypeAlias = dict[str, dict[str, float] | None] # subgroup_name -> metric -> value, or None when metadata is unavailable
+AugRanges: TypeAlias = dict[str, tuple[int, int] | tuple[float, float]]  # snr_range, distance_range
+ProbeBaseline: TypeAlias = dict[str, float]
+ProbeResult: TypeAlias = dict[str, float | None]
+XRTResult: TypeAlias = dict[str, float | str]
+AblationResult: TypeAlias = dict[str, dict[str, float | int | str]]
+
 BackboneVariant = Literal[
     "bcresnet1", "bcresnet5", "bcresnet8", "bcresnet10", "bcresnet16",
 ]
 
 QuadrantLabel = Literal["Q1_accept", "Q2_imposter", "Q3_wrong_word", "Q4_background"]
+
+# Single source of truth for the keyword OOV sentinel.
+# Import this constant in datasets.py, combined.py, and any other module that
+# passes keyword labels to CrossEntropyLoss — never re-define -100 as a literal.
+WORD_IGNORE_INDEX: int = -100
 
 
 @dataclass(frozen=True)
@@ -539,18 +675,18 @@ class KPIResult:
     ta_noisy_macro: float
     distance_ta: dict[float, float]         # distance bucket (m) -> TA
     fa_per_hour_per_user: float
-    fa_per_hour_device: float
+    fa_per_hour_device: dict[int, float]    # N enrolled users -> fa/hr; N ∈ {1, 4, 8}
     q2_rejection: float
-    q3_rejection: float
-    q3_rejection_real: float
-    q3_rejection_synth: float
+    q3_rejection: float             # real + speaker-verified synth weighted average
+    q3_rejection_real: float        # Q3 rejection rate on real (non-synthesized) utterances only
+    q3_rejection_synth: float       # all synthesized Q3 stress rows, reported separately
     q4_rejection: float
     param_count: int
     xrt_fp32: float
     xrt_int8: float
     seed: int
     num_eval_samples: int
-    per_demographic: dict[str, dict]        # optional subgroup KPI summaries
+    per_demographic: SubgroupDict           # optional subgroup KPI summaries
 ```
 
 ### 0.2.3 Configuration system — pydantic-backed YAML
@@ -588,6 +724,11 @@ class AudioConfig(BaseModel):
     window_duration_s: float = 1.6
     window_samples: int = 25600
     window_frames: int = 160
+    # CONSTRAINT: win_length MUST equal n_fft at all times.
+    # LogMelExtractorDeploy (features_deploy.py) enforces this at call-time and raises
+    # ValueError if violated. The training extractor (LogMelExtractor) naturally supports
+    # win_length != n_fft via torch.stft, but doing so breaks train/deploy parity.
+    # Do not change either value independently.
 
 
 class BackboneConfig(BaseModel):
@@ -632,14 +773,20 @@ class TrainingConfig(BaseModel):
     weight_decay: float = 1e-4
     warmup_steps: int = 1000
     max_grad_norm: float = 5.0
-    precision: Literal["fp32", "amp_bf16", "amp_fp16"] = "amp_bf16"
+    precision: Literal["fp32", "amp_bf16", "amp_fp16"] = "amp_fp16"
+    # Default is "amp_fp16": Kaggle T4 GPUs (compute capability 7.5) do NOT support
+    # bfloat16. Override to "amp_bf16" only on Ampere (A100) or newer hardware.
     seed: int = 42
     num_workers: int = 4
     resume_from: Path | None = None
     checkpoint_dir: Path = Path("checkpoints")
-    # Number of unique keyword classes / speaker IDs in the manifests for this
-    # stage. Loaded by run_stage.py from data/manifests/STATS.json and injected
-    # into the config at runtime — do NOT hardcode.
+    checkpoint_every_steps: int = 500       # write local checkpoint every N optimizer steps
+    upload_every_steps: int = 2000          # upload to Kaggle dataset every N optimizer steps
+    # Number of unique classes in the manifests for this stage. Loaded by
+    # run_stage.py from data/manifests/STATS.json and injected into the config
+    # at runtime — do NOT hardcode. Stage 1 uses n_gsc_classes; Stages 2-4 use
+    # n_aux_word_classes / n_aux_speaker_classes.
+    n_gsc_classes: int | None = None
     n_aux_word_classes: int | None = None
     n_aux_speaker_classes: int | None = None
 
@@ -713,6 +860,8 @@ does not include `__base__`, it must be fully self-contained.
 run_name: solospeak-default
 training:
   stage: 1
+  checkpoint_every_steps: 500
+  upload_every_steps: 2000
 audio:
   sample_rate: 16000
   n_fft: 400
@@ -768,6 +917,11 @@ Backbone variant configs inherit from `../defaults.yaml` and override
 `backbone.variant`. Eval/deployment config files use the additional schemas in
 Appendix C.
 
+**Backbone support rule.** `SoloSpeakResNet` is the only supported backbone family for
+v2.4. Do not keep `matchboxnet` in `BackboneConfig`, config files, tests, or production
+code. If the old repository contains a MatchboxNet stub/config, delete it or move it to
+an explicitly marked research branch; it is not part of the shipping product path.
+
 ### 0.2.4 Seeding — determinism is a hard requirement
 
 `solospeak/utils/seeding.py`:
@@ -796,6 +950,82 @@ def seed_everything(seed: int) -> None:
     torch.backends.cudnn.benchmark = False
 ```
 
+### 0.2.4b Utility modules — `audio.py` and `logging.py`
+
+These two utility files must be created at Level 1. Their public contracts are minimal on purpose — they exist to centralise shared helpers so no other module re-implements them.
+
+`solospeak/utils/audio.py`:
+
+```python
+"""Audio I/O and waveform helpers."""
+from pathlib import Path
+
+import numpy as np
+import soundfile as sf
+
+
+def load_wav(path: Path, target_sr: int = 16000) -> np.ndarray:
+    """Load a wav file and return a mono float32 waveform normalised to [-1, 1].
+
+    Resamples to `target_sr` using linear interpolation if the file sample rate
+    differs. For production training use the pre-processed LMDB store instead.
+
+    Returns:
+        waveform: (T,) float32
+    """
+    audio, sr = sf.read(str(path), dtype="float32", always_2d=False)
+    if audio.ndim == 2:
+        audio = audio.mean(axis=1)          # stereo → mono
+    if sr != target_sr:
+        # Simple linear resample — acceptable for offline preprocessing;
+        # production inference always receives 16 kHz input.
+        ratio = target_sr / sr
+        n_out = int(len(audio) * ratio)
+        audio = np.interp(
+            np.linspace(0, len(audio) - 1, n_out),
+            np.arange(len(audio)),
+            audio,
+        ).astype(np.float32)
+    return audio
+
+
+def pad_or_crop_to_window(wav: np.ndarray, window_samples: int = 25600) -> np.ndarray:
+    """Pad (right, reflect) or centre-crop a waveform to exactly `window_samples`."""
+    if len(wav) == window_samples:
+        return wav
+    if len(wav) < window_samples:
+        return np.pad(wav, (0, window_samples - len(wav)), mode="reflect")
+    start = (len(wav) - window_samples) // 2
+    return wav[start:start + window_samples]
+```
+
+`solospeak/utils/logging.py`:
+
+```python
+"""Project-wide logging helpers.
+
+Uses Python's stdlib `logging` module. W&B is a separate concern — use
+`solospeak/training/callbacks.py` for metric logging.
+
+All modules that need a logger should call `get_logger(__name__)`.
+"""
+import logging
+import sys
+
+
+def get_logger(name: str, level: int = logging.INFO) -> logging.Logger:
+    """Return (or create) a module-level logger with a stderr StreamHandler."""
+    logger = logging.getLogger(name)
+    if not logger.handlers:
+        handler = logging.StreamHandler(sys.stderr)
+        handler.setFormatter(
+            logging.Formatter("%(asctime)s | %(name)s | %(levelname)s | %(message)s")
+        )
+        logger.addHandler(handler)
+    logger.setLevel(level)
+    return logger
+```
+
 ### 0.2.5 Acceptance criteria — Phase 0.2
 
 - 🧪 `python -c "import solospeak; print(solospeak.__version__)"` prints `0.1.0`.
@@ -809,7 +1039,10 @@ def seed_everything(seed: int) -> None:
 
 **Duration:** Days 4–8.
 **Goal:** Reproducible pipeline from raw downloads to training-ready manifests, with on-the-fly augmentation.
-**Exit criterion:** `make download-data && make prepare-manifests` produces 7 manifests with documented statistics; a `DataLoader` over `DualHeadDataset` yields augmented batches at `MIN ≥ 80 samples/sec` (TARGET ≥ 200 samples/sec) on a 4-worker CPU process.
+**Exit criterion:** `make download-data && make prepare-manifests && make pack-lmdb`
+produces 7 manifests, documented statistics, and a Kaggle-ready LMDB audio store; a
+`DataLoader` over `DualHeadDataset` yields augmented batches at `MIN ≥ 80 samples/sec`
+(TARGET ≥ 200 samples/sec) on a 4-worker CPU process.
 
 **Smoke path.** CI and fresh-clone development MUST use the minimal path:
 `make download-data-smoke && make prepare-manifests-smoke`. It generates tiny manifests
@@ -827,7 +1060,7 @@ download path is a data-curation task, not a CI prerequisite.
 | Google Speech Commands v2 | CC-BY 4.0 | Yes | Stage 1 pretraining |
 | LibriSpeech (basis for LibriPhrase) | CC-BY 4.0 | Yes | Primary content training |
 | VoxCeleb 1 & 2 | Metadata: CC BY-SA 4.0; audio access/YouTube-derived terms require approval | Unclear; treat as research-only unless approval says otherwise | Preferred speaker head source |
-| MUSAN | CC-BY 4.0 | Yes | Noise augmentation |
+| MUSAN | CC-BY 4.0 | Yes | Noise augmentation plus FA/noisy evaluation buckets |
 | OpenSLR-28 RIRs | Apache 2.0 | Yes | RIR augmentation |
 | Common Voice | CC0-1.0 data, with Mozilla Data Collective use restrictions | Yes for permitted uses; do not re-host/share; do not attempt real-world identity discovery | Lower-confidence fallback (see 1.1.4) |
 
@@ -852,7 +1085,8 @@ Primary URLs to snapshot:
 
 LibriPhrase is NOT a separately-distributed dataset. It is a re-organization of LibriSpeech into (keyword phrase, speaker) pairs. To make this reproducible:
 
-- **Source corpus:** LibriSpeech `train-clean-100` and `train-clean-360`.
+- **Source corpus:** LibriSpeech `train-clean-100`, `train-clean-360`, and
+  `train-other-500`.
 - **Generator:** `scripts/prepare_libriphrase.py` (project-internal; spec below).
 - **Default alignment path:** Montreal Forced Aligner (MFA) 3.3.9. Do not depend on
   unversioned third-party alignment dumps.
@@ -863,10 +1097,22 @@ LibriPhrase is NOT a separately-distributed dataset. It is a re-organization of 
   2. Run MFA with the pinned `english_us_arpa` acoustic model and dictionary. Cache the
      resulting TextGrid files under `data/processed/libriphrase_alignments/`.
   3. Extract every contiguous 2–4 word span that occurs across at least 5 distinct speakers.
-  4. Cap each (phrase, speaker) pair at 10 utterances (random subsample if more available).
-  5. Discard phrases shorter than 0.4 s or longer than 1.4 s.
-  6. Output: a CSV of `(file_path, start_s, end_s, phrase, speaker_id)`.
-- **Expected output:** ~40,000–60,000 (phrase, speaker) pairs spanning ~2,500 LibriSpeech speakers.
+  4. Rank phrase types by `(distinct_speaker_count, total_utterance_count)` descending,
+     break ties lexicographically, and keep the top 1,500 phrase types.
+  5. Cap each (phrase, speaker) pair at 10 utterances (random subsample if more available).
+  6. Discard phrases shorter than 0.4 s or longer than 1.4 s.
+  7. Output: rows containing `(file_path, start_s, end_s, duration_s, phrase, speaker_id)`.
+     If `file_path` points at the original LibriSpeech utterance, `start_s` / `end_s`
+     are mandatory and the dataset loader must crop the phrase before padding to 1.6 s.
+     If the phrase has already been sliced into a standalone wav/LMDB item, use
+     `start_s=0.0` and `end_s=duration_s`.
+- **Expected output:** ~40,000–60,000 manifest rows / utterance segments after the
+  per-(phrase, speaker) cap above, spanning up to 1,500 phrase types and ~2,300
+  LibriSpeech training speakers. `STATS.md` / `STATS.json` must report both
+  `row_count` and `unique_phrase_speaker_pairs` so agents do not confuse capped
+  utterance rows with unique `(phrase, speaker)` identities. If `train-other-500` is
+  intentionally excluded for a clean-only experiment, lower the expected speaker counts
+  accordingly; do not keep the ~2,300-speaker expectation with clean-only input.
 - **Reproducibility:** the script is committed to the repo; the MFA version/model names
   and alignment cache checksum are pinned in `data/README.md`.
 
@@ -897,15 +1143,28 @@ Required dataset entries:
 1. **GSC v2** — `http://download.tensorflow.org/data/speech_commands_v0.02.tar.gz`, ~2.4 GB, extract to `data/raw/gsc_v2/`. 105,829 wav files, 35 command classes.
 2. **LibriSpeech `train-clean-100`** — ~6.3 GB.
 3. **LibriSpeech `train-clean-360`** — ~23 GB.
-4. **VoxCeleb 1 + 2** — see 1.1.4 for fallback.
-5. **MUSAN** — `https://www.openslr.org/resources/17/musan.tar.gz`, ~11 GB. Categories: `music`, `noise`, `speech`. We use `noise` only.
-6. **OpenSLR-28 RIRs** — `https://www.openslr.org/resources/28/rirs_noises.zip`, ~1.3 GB.
+4. **LibriSpeech `train-other-500`** — ~30 GB. Required for the default
+   LibriPhrase recipe's speaker-count targets; optional only for a clearly marked
+   clean-only ablation.
+5. **VoxCeleb 1 + 2** — see 1.1.4 for fallback.
+6. **MUSAN** — `https://www.openslr.org/resources/17/musan.tar.gz`, ~11 GB. Download
+   all categories (`music`, `noise`, `speech`) because different project stages need
+   different subsets:
+   - training noise augmentation uses `noise` by default;
+   - FA evaluation draws continuous non-target audio from `speech`, `music`, and `noise`;
+   - noisy-TA buckets (`babble`, `traffic`, `music`) are resolved from tagged lists
+     generated by `scripts/prepare_manifests.py`. `music` maps to MUSAN `music`,
+     `babble` is mixed from MUSAN `speech`, and `traffic` must come from either a tagged
+     subset of MUSAN `noise` or an explicitly documented CC-compatible supplemental noise
+     source recorded in `data/licenses/`. Do not silently alias a missing bucket.
+7. **OpenSLR-28 RIRs** — `https://www.openslr.org/resources/28/rirs_noises.zip`, ~1.3 GB.
 
 ### 1.1.4 VoxCeleb fallback plan
 
 `🔴 BLOCKING` — VoxCeleb access can fail. The project must not depend on it.
 
-If VoxCeleb access is denied or delayed past day 7, switch to a **Common Voice + LibriSpeech speaker** pipeline:
+If VoxCeleb access is denied, unavailable, or delayed past day 7, switch to a
+**Common Voice + LibriSpeech speaker** pipeline:
 
 - Common Voice English pinned release (default: Mozilla Data Collective Scripted Speech
   24.0 unless a newer release is explicitly snapshotted in `data/licenses/`): estimate
@@ -915,17 +1174,19 @@ If VoxCeleb access is denied or delayed past day 7, switch to a **Common Voice +
   speakers — enough to prototype a speaker head, though the speaker classes are noisier
   and lower-confidence than VoxCeleb/LibriSpeech.
 
-The training code paths must work with either dataset; the dataset choice is recorded in
-the manifest's `source_dataset` column. For Common Voice, treat labels as anonymous
-dataset speaker IDs only. Do not attempt real-world identity discovery, and do not
-re-host/re-share the dataset. If the downloaded Common Voice terms do not permit the
-planned speaker-ID use, use the LibriSpeech-only fallback and mark speaker-head quality
-as lower confidence in the report.
+The training code paths must work with either dataset; this is a first-class supported
+path, not an emergency hack. The dataset choice is recorded in the manifest's
+`source_dataset` column, and no code may assume VoxCeleb-specific directory layouts or
+metadata fields. For Common Voice, treat labels as anonymous dataset speaker IDs only.
+Do not attempt real-world identity discovery, and do not re-host/re-share the dataset.
+If the downloaded Common Voice terms do not permit the planned speaker-ID use, use the
+LibriSpeech-only fallback and mark speaker-head quality as lower confidence in the
+report.
 
 ### 1.1.5 Storage budget — Kaggle / Colab strategy
 
 **Estimated raw + processed disk usage:**
-- Full path (with VoxCeleb2): ~260 GB raw, ~40 GB processed.
+- Full path (with VoxCeleb2): ~290 GB raw, ~40 GB processed.
 - Fallback path (pinned Common Voice English + LibriSpeech): release-dependent, roughly
   120–170 GB raw for recent English releases, ~25–40 GB processed.
 
@@ -950,12 +1211,38 @@ This is documented as **the only supported training environment** for the hackat
 Every manifest is a CSV with columns:
 
 ```csv
-file_path,duration_s,speaker_id,keyword_text,split,source_dataset,quadrant_class
+file_path,start_s,end_s,duration_s,speaker_id,keyword_text,split,source_dataset,quadrant_class,profile_id,enrolled_user_id,enrolled_keyword_text,profile_path,trial_source,q3_gate_eligible,synthesis_backend,speaker_verification_score
 ```
 
 `file_path` is either a real path under `data/raw/` or an LMDB URI of the form
-`lmdb://data/processed/audio.lmdb/<key>`. `quadrant_class` is empty for training
-manifests, populated for `test_kpi.csv`.
+`lmdb://data/processed/audio.lmdb/<key>`.
+
+`speaker_id` and `keyword_text` always describe the trial utterance in `file_path`.
+For ordinary training rows, the enrollment/profile columns are empty. For
+`test_kpi.csv` and Stage-5 quadrant rows, `profile_id`, `enrolled_user_id`, and
+`enrolled_keyword_text` identify the enrolled profile the trial is evaluated against.
+`profile_path` points to a `.npz` profile file containing
+`content_template`, `speaker_template`, `tau`, `user_id`, and `keyword_text`; it may be
+blank before templates have been generated. `trial_source` is one of
+`real`, `augmented`, `tts`, or `background` and is required for the Q3 real/synth split.
+`q3_gate_eligible` is a boolean string (`true` / `false`) used by Stage-5 and KPI
+evaluation. For non-Q3 rows it is normally `true`; for Q3 rows it is `true` only for real
+right-voice trials or synthetic trials that passed the verification policy in 3.6.1.
+Dataset code MUST parse this column explicitly; never use `bool(value)` on a CSV string,
+because `bool("false")` is `True` in Python.
+`synthesis_backend` is blank for real/non-synthetic rows and otherwise records the
+backend name (for example `parler_tts` or `voice_clone_x`). `speaker_verification_score`
+is blank unless a synthetic right-voice claim was checked against the enrolled speaker
+template; when present it stores the cosine similarity used for the pass/fail decision.
+
+`start_s` and `end_s` define the segment inside `file_path`. For pre-sliced wav files or
+LMDB records they must be `0.0` and `duration_s`. For raw LibriSpeech/Common Voice files
+they are mandatory crop offsets; dataset classes must crop this segment before
+pad/crop-to-window.
+
+`quadrant_class` is empty for normal training manifests and populated for `test_kpi.csv`
+or generated Stage-5 quadrant manifests. Ordinary training rows leave the Q3-specific
+columns blank except `q3_gate_eligible`, which may default to `true`.
 
 Manifests are **committed to git** (small). Audio files are not.
 
@@ -985,7 +1272,8 @@ Raw manifest values remain human-readable strings. Dataset classes convert them 
 labels using committed mapping files generated by `scripts/prepare_manifests.py`:
 
 ```
-data/manifests/keyword_vocab.json      # {"hey prism": 0, ...}
+data/manifests/keyword_vocab.json      # LibriPhrase wake phrases: {"hey prism": 0, ...}
+data/manifests/gsc_vocab.json          # exactly 35 GSC v2 command labels for Stage 1
 data/manifests/speaker_vocab.json      # {"speaker_raw_id": 0, ...}
 data/manifests/source_vocab.json       # optional, for diagnostics only
 ```
@@ -993,6 +1281,22 @@ data/manifests/source_vocab.json       # optional, for diagnostics only
 Dataset output uses `keyword_label: int` and `speaker_label: int`. It may also include
 `speaker_id_raw: str` and `keyword_text: str` for logging/debugging. Collation MUST use the
 integer labels, never raw strings.
+
+**Keyword OOV policy for speaker manifests.** `keyword_vocab.json` is deliberately a
+wake-phrase vocabulary, not a general transcript vocabulary. Rows from
+`train_speaker.csv` / `dev_speaker.csv` often have arbitrary VoxCeleb/Common Voice
+transcripts that are not valid wake phrases. For any `DualHeadDataset` row whose
+`keyword_text` is empty, missing, or absent from `keyword_vocab.json`, set:
+
+```python
+from solospeak.utils.types import WORD_IGNORE_INDEX  # defined once in types.py
+keyword_label = WORD_IGNORE_INDEX
+```
+
+`-100` is chosen because it is PyTorch's default `CrossEntropyLoss(ignore_index=...)`.
+Training code MUST mask out `keyword_label == -100` for every word-classification CE
+term, including auxiliary word CE and word-adversary CE. Do not add an `UNK` wake-word
+class and do not silently hash arbitrary transcripts into `keyword_vocab.json`.
 
 ### 1.2.4 Speaker-disjoint split algorithm
 
@@ -1027,7 +1331,10 @@ def assign_split(speaker_id: str, seed: int = 42,
 
 ### 1.2.5 Statistics summary
 
-`scripts/prepare_manifests.py` writes `data/manifests/STATS.md` and `data/manifests/STATS.json`. The JSON is consumed at training time to inject `n_aux_word_classes` and `n_aux_speaker_classes` into the config (see `TrainingConfig`).
+`scripts/prepare_manifests.py` writes `data/manifests/STATS.md` and
+`data/manifests/STATS.json`. The JSON is consumed at training time to inject
+`n_gsc_classes`, `n_aux_word_classes`, and `n_aux_speaker_classes` into the config (see
+`TrainingConfig`).
 
 Usage:
 
@@ -1040,12 +1347,90 @@ python -m scripts.prepare_manifests --smoke  # tiny deterministic manifests for 
 row counts over fixture/generated audio. It is for contract tests only and must set
 `source_dataset=smoke`.
 
+**Smoke `train_gsc.csv` contract.** The smoke path must still preserve the Stage-1 class
+shape. It writes exactly 350 GSC rows: 35 canonical GSC v2 labels × 10 generated clips per
+label. Generate deterministic 1.6 s, 16 kHz mono wavs under `data/raw/smoke/gsc/` using a
+fixed NumPy seed. The waveform may be random noise plus a class-dependent sine tone; the
+audio only needs to satisfy loader/shape contracts, not train a useful classifier.
+
+`gsc_vocab.json` must contain exactly these labels in this order:
+
+```text
+backward, bed, bird, cat, dog, down, eight, five, follow, forward, four, go,
+happy, house, learn, left, marvin, nine, no, off, on, one, right, seven,
+sheila, six, stop, three, tree, two, up, visual, wow, yes, zero
 ```
-train_content.csv: 42,318 rows, 2,341 speakers, 847 unique keywords
-dev_content.csv:    4,872 rows,   289 speakers, 112 unique keywords
-test_kpi.csv:       1,940 rows,    98 speakers,  50 unique keywords
-                    Q1: 485, Q2: 485, Q3: 485, Q4: 485
+
+`STATS.json` must report `n_gsc_classes = 35` separately from
+`n_aux_word_classes = len(keyword_vocab.json)`. Stage 1 uses `n_gsc_classes` /
+`gsc_vocab.json`; Stages 2-4 use `n_aux_word_classes` / `keyword_vocab.json`.
+For LibriPhrase manifests, `STATS.json` must also distinguish `row_count` from
+`unique_phrase_speaker_pairs`; `train_content.csv` row targets always refer to manifest
+rows / utterance segments, not unique identities.
+
+Smoke `STATS.md` / `STATS.json` must use tiny counts for all seven manifests. Example:
+
 ```
+train_gsc.csv:       350 rows, 35 classes, 10 clips/class
+train_content.csv:    80 rows,  8 speakers, 8 unique keywords
+train_speaker.csv:    80 rows, 12 speakers
+dev_content.csv:      24 rows,  4 speakers, 4 unique keywords
+dev_speaker.csv:      24 rows,  4 speakers
+test_kpi.csv:         40 rows,  4 profiles,  4 unique keywords
+                     Q1: 10, Q2: 10, Q3: 10, Q4: 10
+test_fa.csv:           6 rows, total_duration_s >= 60
+n_gsc_classes:        35
+n_aux_word_classes:    8
+n_aux_speaker_classes: 12
+```
+
+Full-path stats use the expected row ranges from 1.2.2 instead; do not copy the smoke
+counts into full data reports.
+
+### 1.2.6 LMDB packing and profile files
+
+`scripts/pack_audio_lmdb.py` is the only supported way to produce the Kaggle-ready audio
+store referenced in 1.1.5.
+
+Contract:
+- Reads the seven manifests plus any generated Stage-5 quadrant manifests.
+- For each row, loads `file_path`, crops `[start_s, end_s]`, resamples to 16 kHz mono if
+  needed, and stores the resulting phrase/clip audio under a deterministic LMDB key.
+- Writes `data/processed/audio.lmdb` and `data/processed/audio_lmdb_index.json`.
+- Rewrites packed manifests so `file_path` is `lmdb://data/processed/audio.lmdb/<key>`,
+  `start_s=0.0`, `end_s=duration_s`, and no downstream dataset loader needs the raw
+  corpus path.
+- Is idempotent: re-running with unchanged source rows produces the same keys and skips
+  already-packed clips whose checksum matches.
+
+**LMDB key format (canonical — both `pack_audio_lmdb.py` and all dataset loaders MUST use this exact formula):**
+
+```python
+import hashlib
+
+def make_lmdb_key(file_path: str, start_s: float, end_s: float) -> str:
+    """Deterministic LMDB key for a cropped audio clip.
+
+    Key is the first 24 hex characters of the SHA-256 digest of
+    '{file_path}:{start_s:.6f}:{end_s:.6f}'. This is long enough to be
+    collision-free across all expected corpus sizes (< 10M clips).
+    """
+    raw = f"{file_path}:{start_s:.6f}:{end_s:.6f}"
+    return hashlib.sha256(raw.encode()).hexdigest()[:24]
+```
+
+Define `make_lmdb_key` in `solospeak/utils/audio.py` and import it in both
+`scripts/pack_audio_lmdb.py` and `solospeak/data/datasets.py`. Never derive the key
+differently in the two files — key format mismatches cause silent lookup failures at
+training time.
+
+Stage-5 and KPI evaluation profiles are not stored as giant vectors in CSV. They live
+under `data/processed/enrollment_profiles/` as `.npz` files named by `profile_id`.
+Each file contains `content_template`, `speaker_template`, `tau`, `user_id`,
+`keyword_text`, and the manifest row IDs used for enrollment. `profile_path` in
+`test_kpi.csv` / quadrant manifests points to this file. If templates have not yet been
+computed, `profile_path` may be blank, but `profile_id`, `enrolled_user_id`, and
+`enrolled_keyword_text` must still be populated so the profile builder can create it.
 
 ## 1.3 Audio Feature Extraction
 
@@ -1121,9 +1506,83 @@ class LogMelExtractor(nn.Module):
         return log_mel.unsqueeze(1)
 ```
 
-`solospeak/data/features_deploy.py` — NumPy variant with the identical algorithm,
-including the same center-crop/right-pad time-axis fix. Spec: input `(T=25600,) float32`,
-output `(1, 80, 160) float32`.
+`solospeak/data/features_deploy.py` — deployment-time, no PyTorch import:
+
+```python
+"""Log-mel extraction, deployment variant.
+
+Pure NumPy implementation of the same algorithm as LogMelExtractor. This file
+is used by the CLI demo and by ONNX Runtime validation before the mel tensor is
+fed to the exported model.
+"""
+import numpy as np
+
+from solospeak.utils.config import AudioConfig
+
+
+def _build_mel_filterbank_numpy(config: AudioConfig) -> np.ndarray:
+    """HTK mel filterbank — (n_fft//2 + 1, n_mels) float32."""
+    n_freqs = config.n_fft // 2 + 1
+    freq_bins = np.linspace(
+        0.0, config.sample_rate / 2.0, n_freqs, dtype=np.float32,
+    )
+    m_min = np.float32(2595.0) * np.log10(np.float32(1.0 + config.fmin / 700.0))
+    m_max = np.float32(2595.0) * np.log10(np.float32(1.0 + config.fmax / 700.0))
+    mel_pts = np.linspace(float(m_min), float(m_max), config.n_mels + 2, dtype=np.float32)
+    hz_pts = np.float32(700.0) * (
+        np.float32(10.0) ** (mel_pts / np.float32(2595.0)) - np.float32(1.0)
+    )
+    f = freq_bins[:, None]
+    lo, center, hi = hz_pts[:-2][None, :], hz_pts[1:-1][None, :], hz_pts[2:][None, :]
+    lower = (f - lo) / np.maximum(center - lo, np.float32(1e-10))
+    upper = (hi - f) / np.maximum(hi - center, np.float32(1e-10))
+    return np.maximum(np.minimum(lower, upper), np.float32(0.0)).astype(np.float32)
+
+
+class LogMelExtractorDeploy:
+    def __init__(self, config: AudioConfig) -> None:
+        self.config = config
+        self.fb = _build_mel_filterbank_numpy(config)
+
+    def _fix_time_dim(self, log_mel: np.ndarray) -> np.ndarray:
+        """Center-crop or right-pad to config.window_frames."""
+        target = self.config.window_frames
+        frames = log_mel.shape[-1]
+        if frames == target:
+            return log_mel
+        if frames > target:
+            start = (frames - target) // 2
+            return log_mel[..., start:start + target]
+        return np.pad(log_mel, ((0, 0), (0, target - frames)), mode="constant")
+
+    def __call__(self, waveform: np.ndarray) -> np.ndarray:
+        """(T=25600,) float32 -> (1, n_mels=80, window_frames=160)."""
+        c = self.config
+        x = waveform.astype(np.float32, copy=False)
+        if x.ndim != 1:
+            raise ValueError(f"Expected mono waveform shape (T,), got {x.shape}.")
+        if c.win_length != c.n_fft:
+            raise ValueError("Deployment extractor requires win_length == n_fft for parity.")
+
+        pad = c.n_fft // 2
+        x = np.pad(x, pad_width=pad, mode="reflect")
+
+        n = np.arange(c.win_length, dtype=np.float32)
+        window = np.float32(0.5) * (
+            np.float32(1.0) - np.cos(np.float32(2.0 * np.pi / c.win_length) * n)
+        )
+        n_frames = 1 + (len(x) - c.n_fft) // c.hop_length
+        starts = np.arange(n_frames)[:, None] * c.hop_length
+        idx = starts + np.arange(c.n_fft)[None, :]
+        frames = x[idx].astype(np.float32)
+        frames *= window[None, :]
+
+        spectrum = np.fft.rfft(frames, n=c.n_fft, axis=-1)
+        power = (spectrum.real ** 2 + spectrum.imag ** 2).astype(np.float32)
+        mel = (power @ self.fb).astype(np.float32)              # (frames, mels)
+        log_mel = np.log(np.maximum(mel, np.float32(1e-6))).astype(np.float32).T
+        return self._fix_time_dim(log_mel)[None, :, :]
+```
 
 🧪 **CRITICAL TEST:** `tests/unit/test_features.py::test_train_deploy_parity` runs both
 extractors on a synthetic 1.6 s waveform and asserts
@@ -1133,7 +1592,7 @@ extractors on a synthetic 1.6 s waveform and asserts
 
 The deployed ONNX model takes a fixed `(1, 1, 80, 160)` mel input derived from exactly
 25,600 audio samples (1.6 s at 16 kHz). Training-time data is padded or center-cropped
-to `AudioConfig.window_samples` via `solospeak/data/datasets.py::pad_or_crop_to_window`.
+to `AudioConfig.window_samples` via `solospeak/utils/audio.py::pad_or_crop_to_window`.
 The feature extractor then center-crops/right-pads the mel axis to
 `AudioConfig.window_frames=160`.
 Streaming inference uses the same 1.6 s context with a 160 ms hop so the demo can meet
@@ -1145,7 +1604,11 @@ This decision is final: **no variable-length inference**. It simplifies ONNX exp
 
 ### 1.4.1 Augmentation operator inventory
 
-Each operator is a standalone class with `__call__(wav: Tensor) -> Tensor`, applied probabilistically.
+Operators are split into two families by domain. The waveform augmenters run before
+feature extraction; the mel augmenter runs after. The DataLoader pipeline applies waveform
+augmenters first, then calls `LogMelExtractor`, then applies mel augmenters.
+
+**Waveform augmenters** — interface: `__call__(wav: Tensor) -> Tensor`
 
 | Operator | Purpose | Probability | Parameters |
 |---|---|---|---|
@@ -1154,6 +1617,11 @@ Each operator is a standalone class with `__call__(wav: Tensor) -> Tensor`, appl
 | `GainJitter` | Random linear gain | 0.3 | gain ∈ [−6, +6] dB |
 | `TimeShift` | Circular shift within window | 0.3 | shift ∈ [−100, +100] ms |
 | `PitchShift` | Small pitch shift | 0.1 | semitones ∈ [−1, +1] |
+
+**Mel augmenters** — interface: `__call__(mel: Tensor) -> Tensor` (operates on log-mel spectrogram, NOT raw waveform)
+
+| Operator | Purpose | Probability | Parameters |
+|---|---|---|---|
 | `SpecAugment` | Time + frequency masking on mel | 0.5 | 2 masks each, ≤ 20% coverage |
 
 ### 1.4.2 Curriculum SNR (novelty claim 4)
@@ -1174,13 +1642,14 @@ class CurriculumAugmenter:
         self.snr_final = snr_final
         self.distance_final = distance_final
 
-    def current_ranges(self, step: int) -> dict:
+    def current_ranges(self, step: int) -> dict[str, tuple[int, int] | tuple[float, float]]:
         progress = min(1.0, step / (0.5 * self.total_steps))
         snr_min = int(30 - progress * (30 - self.snr_final[0]))
         snr_max = self.snr_final[1]
         dist_max = 0.5 + progress * (self.distance_final[1] - 0.5)
-        return {"snr_range": (snr_min, snr_max),
-                "distance_range": (0.5, dist_max)}
+        # Key names match DataConfig field names exactly: snr_range_db and distance_range_m.
+        return {"snr_range_db": (snr_min, snr_max),
+                "distance_range_m": (0.5, dist_max)}
 ```
 
 ### 1.4.3 Hard negative mining
@@ -1230,7 +1699,12 @@ def speaker_hard_negatives(anchor_id: str, embeddings: np.ndarray,
     return [speaker_ids[i] for i in top_idx]
 ```
 
-**ECAPA-TDNN dependency.** Speaker hard-negative mining requires precomputed speaker embeddings. We use `speechbrain.inference.speaker.EncoderClassifier` with the `speechbrain/spkrec-ecapa-voxceleb` model (pinned at SpeechBrain 1.0.0).
+**ECAPA-TDNN dependency.** Speaker hard-negative mining requires precomputed speaker
+embeddings. We use `speechbrain.inference.speaker.EncoderClassifier` with the
+`speechbrain/spkrec-ecapa-voxceleb` model. The environment pins `torch==2.3.1`,
+`torchaudio==2.3.1`, and `speechbrain==1.0.3`; do not downgrade SpeechBrain to 1.0.0 or
+leave torchaudio unconstrained, because that pairing is known to produce brittle import
+and runtime behavior around the pretrained inference API.
 
 `scripts/precompute_speaker_embeddings.py`:
 - Loads ECAPA-TDNN once.
@@ -1249,13 +1723,47 @@ def speaker_hard_negatives(anchor_id: str, embeddings: np.ndarray,
 
 Stage 1: GSCDataset           — 35-class KWS classification
 Stage 2-4: DualHeadDataset    — yields (wav, keyword_label, speaker_label) triplets
-Stage 5: QuadrantDataset      — yields (wav, quadrant_label, user_profile)
+Stage 5: QuadrantDataset      — yields trial audio + quadrant label + profile templates
 """
 ```
 
-Each dataset yields a `dict`:
-- `wav: Tensor(T_window=25600,)` — fixed-length, 1.6 s at 16 kHz, padded or center-cropped from source clip.
-- Labels per stage.
+Each dataset yields a `dict`. Exact schemas per stage:
+
+- **GSCDataset** (Stage 1):
+  - `wav: Tensor(25600,)` — fixed-length, float32, [-1, 1]
+  - `keyword_label: int` — integer class index into `gsc_vocab.json`
+  - `keyword_text: str` — raw GSC command string (e.g. `"yes"`)
+
+- **DualHeadDataset** (Stages 2–4):
+  - `wav: Tensor(25600,)` — fixed-length, float32, [-1, 1]
+  - `keyword_label: int` — index into `keyword_vocab.json`, or `WORD_IGNORE_INDEX = -100`
+    when the row comes from a speaker-only manifest whose transcript is not a wake phrase
+  - `speaker_label: int` — index into `speaker_vocab.json`
+  - `speaker_id_raw: str` — raw speaker ID string (for logging/debugging only)
+  - `keyword_text: str` — raw phrase string (for logging/debugging only)
+
+- **QuadrantDataset** (Stage 5):
+  - `wav: Tensor(25600,)` — fixed-length, float32, [-1, 1]
+  - `quadrant_label: int` — 1 for Q1 (accept), 0 for Q2/Q3/Q4 (reject)
+  - `quadrant_class: str` — one of `"Q1_accept"`, `"Q2_imposter"`, `"Q3_wrong_word"`, `"Q4_background"`
+  - `user_id: str` — enrolled user ID this sample is evaluated against
+  - `keyword_text: str` — trial utterance keyword/text
+  - `enrolled_keyword_text: str` — enrolled keyword for this profile
+  - `profile_id: str` — key for the enrolled profile
+  - `trial_source: str` — `"real"`, `"augmented"`, `"tts"`, or `"background"`
+  - `q3_gate_eligible: bool` — true iff the row is allowed in the hard quadrant gate
+  - `synthesis_backend: str` — backend name for synthetic rows, else `""`
+  - `speaker_verification_score: float | None` — cosine score for synthetic right-voice checks
+  - `content_template: Tensor(128,)` — L2-normalized content enrollment template for this user
+  - `speaker_template: Tensor(128,)` — L2-normalized speaker enrollment template for this user
+
+**`profile_path` blank-case contract.** The spec notes that `profile_path` may be blank
+before enrollment profiles have been generated. `QuadrantDataset` MUST raise
+`FileNotFoundError` if a row's `profile_path` is blank or the pointed-to `.npz` file
+does not exist. Do NOT silently return zero-filled templates — a blank path means the
+dataset was instantiated before enrollment profiles were built, which is a usage error.
+`QuadrantDataset` should only be constructed after `scripts/pack_audio_lmdb.py` and the
+enrollment profile builder have both completed successfully.
 
 ### 1.5.2 Class-aware sampler for SupCon
 
@@ -1271,7 +1779,9 @@ empty for those classes and silently drops their gradient.
 This sampler guarantees `min_positives_per_class` positives for each class
 that appears in a batch.
 """
-class ClassAwareBatchSampler:
+class ClassAwareBatchSampler(Sampler[list[int]]):
+    # Must inherit from torch.utils.data.Sampler[list[int]] so that DataLoader
+    # recognises it as a batch sampler and does not apply default sampling on top.
     def __init__(
         self,
         labels: list[int],
@@ -1280,8 +1790,8 @@ class ClassAwareBatchSampler:
         num_samples_per_class: int = 16,
         seed: int = 42,
     ) -> None: ...
-    def __iter__(self): ...
-    def __len__(self): ...
+    def __iter__(self) -> Iterator[list[int]]: ...
+    def __len__(self) -> int: ...
 ```
 
 Used by both content (label = keyword class) and speaker (label = integer speaker label)
@@ -1295,14 +1805,69 @@ sample with replacement inside that class.
 
 `🔴 BLOCKING`. All wavs are pre-padded to fixed length in `__getitem__`, so collation is straightforward stacking — no variable-length collator needed.
 
+Three collators are defined — one per dataset type. Pass the appropriate one as `collate_fn` to `DataLoader`.
+
 ```python
-def collate_fixed_length(batch: list[dict]) -> dict:
+def parse_bool_csv(value: DatasetValue) -> bool:
+    """Parse canonical manifest booleans. Never replace this with bool(value)."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized == "true":
+            return True
+        if normalized == "false":
+            return False
+    raise ValueError(f"Expected manifest boolean 'true'/'false', got {value!r}")
+
+
+def collate_gsc(batch: list[DatasetItem]) -> BatchDict:
+    """For GSCDataset (Stage 1)."""
+    return {
+        "wav": torch.stack([b["wav"] for b in batch]),
+        "keyword_label": torch.tensor([b["keyword_label"] for b in batch], dtype=torch.long),
+    }
+
+
+def collate_dual_head(batch: list[DatasetItem]) -> BatchDict:
+    """For DualHeadDataset (Stages 2–4)."""
     return {
         "wav": torch.stack([b["wav"] for b in batch]),
         "keyword_label": torch.tensor([b["keyword_label"] for b in batch], dtype=torch.long),
         "speaker_label": torch.tensor([b["speaker_label"] for b in batch], dtype=torch.long),
     }
+
+
+def collate_quadrant(batch: list[DatasetItem]) -> BatchDict:
+    """For QuadrantDataset (Stage 5).
+
+    Templates are stacked as tensors; string fields are kept as lists because
+    torch.stack does not handle strings.
+    """
+    return {
+        "wav": torch.stack([b["wav"] for b in batch]),
+        "quadrant_label": torch.tensor([b["quadrant_label"] for b in batch], dtype=torch.long),
+        "quadrant_class": [b["quadrant_class"] for b in batch],   # list[str]
+        "user_id": [b["user_id"] for b in batch],                 # list[str]
+        "keyword_text": [b["keyword_text"] for b in batch],       # list[str]
+        "enrolled_keyword_text": [b["enrolled_keyword_text"] for b in batch],
+        "profile_id": [b["profile_id"] for b in batch],           # list[str]
+        "trial_source": [b["trial_source"] for b in batch],       # list[str]
+        "q3_gate_eligible": torch.tensor(
+            [parse_bool_csv(b["q3_gate_eligible"]) for b in batch], dtype=torch.bool,
+        ),
+        "synthesis_backend": [str(b["synthesis_backend"]) for b in batch],
+        "speaker_verification_score": torch.tensor([
+            float("nan") if b["speaker_verification_score"] is None
+            else float(b["speaker_verification_score"])
+            for b in batch
+        ], dtype=torch.float32),
+        "content_template": torch.stack([b["content_template"] for b in batch]),
+        "speaker_template": torch.stack([b["speaker_template"] for b in batch]),
+    }
 ```
+
+**Usage rule.** `collate_fixed_length` is the legacy name kept for backward compatibility; it is an alias for `collate_dual_head`. New code should call the named variant directly.
 
 ### 1.5.4 Acceptance criteria — Phase 1
 
@@ -1311,8 +1876,14 @@ def collate_fixed_length(batch: list[dict]) -> dict:
 - 🧪 Full path: `make download-data` completes; idempotent on re-run. This is not a CI
   requirement and may require tens/hundreds of GB depending on selected corpora.
 - 🧪 `make prepare-manifests` produces 7 manifest files + `STATS.md` + `STATS.json`.
-- 🧪 `data/manifests/keyword_vocab.json` and `speaker_vocab.json` exist and are used by
-  datasets to emit integer labels.
+- 🧪 `make pack-lmdb` produces `data/processed/audio.lmdb`, rewrites packed manifest
+  paths to `lmdb://...`, and is idempotent on re-run.
+- 🧪 `data/manifests/keyword_vocab.json`, `gsc_vocab.json`, and `speaker_vocab.json`
+  exist and are used by datasets to emit integer labels.
+- 🧪 Smoke `train_gsc.csv` contains 350 rows, exactly 35 classes, and
+  `STATS.json["n_gsc_classes"] == 35`.
+- 🧪 Speaker-manifest rows with OOV transcripts emit `keyword_label == -100`, and word CE
+  losses ignore those rows instead of creating an `UNK` class.
 - 🧪 `tests/integration/test_data_pipeline.py::test_no_speaker_overlap` passes.
 - 🧪 `tests/unit/test_features.py::test_train_deploy_parity` passes (`atol=3e-3`).
 - 🧪 Benchmark: `DataLoader(DualHeadDataset, batch_size=128, num_workers=4)` achieves `MIN ≥ 80 samples/sec` on CPU. (TARGET ≥ 200 samples/sec; failing TARGET is acceptable, failing MIN is not.)
@@ -1413,6 +1984,17 @@ class NormalBlock(nn.Module):
         out = self.bn2(self.conv2(out))
         return self.relu(out + identity)
 
+    def fuse_model(self) -> None:
+        """Fuse Conv+BN pairs for export/quantization.
+
+        ReLU is intentionally left unfused inside residual blocks because one
+        module instance is used in two places. Conv+BN fusion gives the export
+        speedup we need without changing the forward graph semantics.
+        """
+        torch.ao.quantization.fuse_modules(
+            self, [["conv1", "bn1"], ["conv2", "bn2"]], inplace=True,
+        )
+
 
 class TransitionBlock(nn.Module):
     """Halves both frequency and time dimensions and changes channel count.
@@ -1449,6 +2031,13 @@ class TransitionBlock(nn.Module):
         out = self.relu(self.bn1(self.conv1(x)))
         out = self.bn2(self.conv2(out))
         return self.relu(out + identity)
+
+    def fuse_model(self) -> None:
+        """Fuse Conv+BN pairs for export/quantization."""
+        torch.ao.quantization.fuse_modules(
+            self, [["conv1", "bn1"], ["conv2", "bn2"]], inplace=True,
+        )
+        torch.ao.quantization.fuse_modules(self.shortcut, [["0", "1"]], inplace=True)
 
 
 class SoloSpeakResNet(nn.Module):
@@ -1511,6 +2100,14 @@ class SoloSpeakResNet(nn.Module):
         x = self.stages(x)
         x = self.freq_pool(x)
         return x
+
+    def fuse_model(self) -> None:
+        """Fuse all supported Conv+BN patterns before ONNX export/quantization."""
+        self.eval()
+        torch.ao.quantization.fuse_modules(self.stem, [["0", "1", "2"]], inplace=True)
+        for block in self.stages:
+            if hasattr(block, "fuse_model"):
+                block.fuse_model()
 
 
 # Backward-compatible alias for older tests/scripts. New code should import
@@ -1622,6 +2219,22 @@ def test_onnx_export(tmp_path):
     assert onnx_path.exists()
 ```
 
+🧪 **Test:** `tests/unit/test_backbones.py::test_fuse_model_export`
+
+```python
+@pytest.mark.onnx
+def test_fuse_model_export(tmp_path):
+    model = SoloSpeakResNet("bcresnet8").eval()
+    model.fuse_model()
+    mel = torch.randn(1, 1, 80, 160)
+    out = model(mel)
+    assert out.shape == (1, 96, 1, 20)
+    onnx_path = tmp_path / "bcresnet_fused.onnx"
+    torch.onnx.export(model, mel, onnx_path, opset_version=17,
+                      input_names=["mel"], output_names=["feat"])
+    assert onnx_path.exists()
+```
+
 ### 2.1.8 Acceptance criteria — Phase 2.1
 
 - 🧪 All five variants instantiate without error.
@@ -1629,8 +2242,12 @@ def test_onnx_export(tmp_path):
 - 🧪 `model(torch.randn(4, 1, 80, 160)).shape == (4, output_channels, 1, 20)`.
 - 🧪 `loss.backward()` produces finite gradients on input.
 - 🧪 ONNX export at opset 17 succeeds.
+- 🧪 `model.fuse_model()` preserves the shape contract and the fused model exports.
 
-**STOP. Do not advance to 2.2 until all five tests above pass.** If a param count is off, double-check that BN bias/weight count is included (each BN contributes `2 * C` parameters). Do NOT modify the architecture to hit a different number — the architecture is the contract.
+**STOP. Do not advance to 2.2 until all tests above pass.** If a param count is off,
+double-check that BN bias/weight count is included (each BN contributes `2 * C`
+parameters). Do NOT modify the architecture to hit a different number — the architecture
+is the contract.
 
 ## 2.2 Heads — Content and Speaker
 
@@ -1689,6 +2306,10 @@ class AuxiliaryHeads(nn.Module):
         super().__init__()
         self.aux_word = nn.Linear(embed_dim, n_words)
         self.aux_speaker = nn.Linear(embed_dim, n_speakers)
+
+    def forward(self, z_c: torch.Tensor, z_s: torch.Tensor
+                ) -> tuple[torch.Tensor, torch.Tensor]:
+        return self.aux_word(z_c), self.aux_speaker(z_s)
 ```
 
 ### 2.2.4 Acceptance criteria — Phase 2.2
@@ -1766,13 +2387,15 @@ from torch import nn
 
 class _GradientReversal(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, x, lambda_):
-        ctx.lambda_ = lambda_
+    def forward(ctx: torch.autograd.function.FunctionCtx,  # type: ignore[override]
+                x: torch.Tensor, lambda_: float) -> torch.Tensor:
+        ctx.lambda_ = lambda_  # type: ignore[attr-defined]
         return x.view_as(x)
 
     @staticmethod
-    def backward(ctx, grad_output):
-        return -ctx.lambda_ * grad_output, None
+    def backward(ctx: torch.autograd.function.FunctionCtx,  # type: ignore[override]
+                 grad_output: torch.Tensor) -> tuple[torch.Tensor, None]:
+        return -ctx.lambda_ * grad_output, None  # type: ignore[attr-defined]
 
 
 def grad_reverse(x: torch.Tensor, lambda_: float = 1.0) -> torch.Tensor:
@@ -1800,6 +2423,9 @@ class AdversarialProbeHead(nn.Module):
             nn.ReLU(inplace=True),
             nn.Linear(256, n_classes),
         )
+
+    def forward(self, z: torch.Tensor) -> torch.Tensor:
+        return self.net(z)
 ```
 
 ### 2.3.4 Combined multi-loss
@@ -1816,7 +2442,52 @@ Stage-specific loss compositions:
 - Stage 3: Stage 2 + ramped `lambda_ortho * L_ortho + lambda_adv * L_adv`.
 - Stage 4: same as Stage 3, with heavy augmentation in the data pipeline.
 - Stage 5: BCE on fusion head only (encoder frozen).
-- Stage 6: same as Stage 4 with QAT-aware forward.
+- Stage 6: QAT-aware distillation on the clean deployable model; no aux/adversarial
+  heads are required.
+
+`CombinedLoss.forward()` receives logical streams, not a single flat batch:
+
+```python
+losses = combined_loss(
+    outputs={
+        "content": content_out,
+        "speaker": speaker_out,
+    },
+    batches={
+        "content": content_batch,
+        "speaker": speaker_batch,
+    },
+    step=step,
+)
+```
+
+For Stage 1 use the key `"gsc"`, for Stage 5 use `"quadrant"`, and for Stage 6 use
+`"distill"` plus optional `"quadrant"`. Do not infer ownership from whatever labels happen
+to be present in one merged batch.
+
+**Aux CE routing rule.** `L_aux_ce` is not "CE on every label in every interleaved
+batch." It is the sum of only the valid, task-owned CE terms:
+
+```python
+from solospeak.utils.types import WORD_IGNORE_INDEX  # defined once in types.py — do not re-define
+
+L_aux_word = cross_entropy(
+    content_out["word_logits"],
+    content_batch["keyword_label"],
+    ignore_index=WORD_IGNORE_INDEX,
+)
+L_aux_speaker = cross_entropy(
+    speaker_out["speaker_logits"],
+    speaker_batch["speaker_label"],
+)
+L_aux_ce = L_aux_word + L_aux_speaker
+```
+
+In Stages 3-4, adversarial CE follows the same ownership:
+`content_adversary(z_c)` predicts speaker IDs on the speaker batch, while
+`speaker_adversary(z_s)` predicts word IDs only on rows whose `keyword_label != -100`
+(normally the content batch). Any CE term that consumes `keyword_label` MUST pass
+`ignore_index=WORD_IGNORE_INDEX` or apply the equivalent mask.
 
 ### 2.3.5 Acceptance criteria — Phase 2.3
 
@@ -1966,7 +2637,110 @@ def test_fusion_param_count():
     assert n == 361, f"Got {n}"
 ```
 
-### 2.5.1 Acceptance criteria — Phase 2
+## 2.6 Silero-VAD Wrapper
+
+`solospeak/models/vad.py`:
+
+```python
+"""Silero-VAD wrapper for streaming inference.
+
+Wraps the Silero VAD v4 ONNX model (silero_vad_v4.onnx) so the streaming
+pipeline can gate mel-extraction on speech activity.
+
+Pinned model: a specific Silero ONNX asset from `snakers4/silero-vad`, shipped in the
+OTA package as `silero_vad_v4.onnx`. Record the upstream URL, file size, SHA-256, and
+input names in `artifacts/MANIFEST.json`. The wrapper below matches the current official
+ONNX streaming signature (`input`, `state`, `sr`) and keeps the required 64-sample
+context internally. If the pinned asset exposes a different signature (for example older
+`h`/`c` recurrent-state inputs), update this wrapper and its tests before using it.
+Ref: https://github.com/snakers4/silero-vad
+
+The wrapper is intentionally thin: it exposes a single `is_speech(frame)` method.
+The ONNX model expects 512-sample frames at 16 kHz (32 ms); the streaming ring
+buffer (streaming.py) must supply exactly 512 new samples per call. The wrapper prepends
+the 64-sample context required by the ONNX graph.
+"""
+import numpy as np
+import onnxruntime as ort
+from pathlib import Path
+from typing import ClassVar
+
+
+class SileroVAD:
+    """Thin wrapper around Silero VAD v4 ONNX model.
+
+    Usage:
+        vad = SileroVAD(Path("artifacts/silero_vad_v4.onnx"))
+        speech = vad.is_speech(audio_frame_512_samples)
+    """
+
+    FRAME_SAMPLES: ClassVar[int] = 512        # required by the v4 model at 16 kHz
+    CONTEXT_SAMPLES: ClassVar[int] = 64       # official ONNX wrapper context at 16 kHz
+    SAMPLE_RATE: ClassVar[int] = 16000
+
+    def __init__(self, onnx_path: Path, threshold: float = 0.5) -> None:
+        self.threshold = threshold
+        opts = ort.SessionOptions()
+        opts.inter_op_num_threads = 1
+        opts.intra_op_num_threads = 1
+        self._session = ort.InferenceSession(str(onnx_path), sess_options=opts)
+        input_names = {inp.name for inp in self._session.get_inputs()}
+        expected = {"input", "state", "sr"}
+        if not expected.issubset(input_names):
+            raise ValueError(
+                f"Unexpected Silero ONNX inputs {sorted(input_names)}; expected {sorted(expected)}. "
+                "Pin the official state/context model or update SileroVAD."
+            )
+        # Stateful recurrent state + streaming context required across frames.
+        self._state = np.zeros((2, 1, 128), dtype=np.float32)
+        self._context = np.zeros((1, self.CONTEXT_SAMPLES), dtype=np.float32)
+
+    def is_speech(self, frame: np.ndarray) -> bool:
+        """Return True if the 512-sample frame contains speech.
+
+        Args:
+            frame: (512,) float32, normalised to [-1, 1].
+
+        Returns:
+            bool — True if VAD confidence ≥ self.threshold.
+        """
+        if frame.shape != (self.FRAME_SAMPLES,):
+            raise ValueError(
+                f"VAD expects exactly {self.FRAME_SAMPLES} samples, got {frame.shape}"
+            )
+        x = frame[None, :].astype(np.float32)          # (1, 512)
+        x = np.concatenate([self._context, x], axis=1) # (1, 576)
+        sr = np.array(self.SAMPLE_RATE, dtype=np.int64)
+        out, self._state = self._session.run(
+            None,
+            {"input": x, "state": self._state, "sr": sr},
+        )
+        self._context = x[:, -self.CONTEXT_SAMPLES:]
+        return bool(out.item() >= self.threshold)
+
+    def reset_state(self) -> None:
+        """Reset hidden state between independent audio streams."""
+        self._state[:] = 0.0
+        self._context[:] = 0.0
+```
+
+🧪 **Test:** `tests/unit/test_solospeak.py::test_silero_vad_wrapper`
+- Skip (`@pytest.mark.onnx`) if `artifacts/silero_vad_v4.onnx` does not exist.
+- Construct a 512-sample silent frame (all zeros) and a 512-sample sine-wave frame.
+- Assert `is_speech` returns `False` on silence (confidence near 0).
+- Assert `reset_state()` does not raise.
+
+### 2.6.1 Acceptance criteria — Phase 2.6
+
+- 🧪 `SileroVAD` imports without error even when the ONNX file is absent (import-time check only).
+- 🧪 `SileroVAD.FRAME_SAMPLES == 512` and `SileroVAD.SAMPLE_RATE == 16000`.
+- 🧪 `SileroVAD.CONTEXT_SAMPLES == 64`, and constructing the wrapper against the pinned
+  ONNX file validates that the graph exposes `input`, `state`, and `sr`.
+- 🧪 `is_speech` raises `ValueError` for wrong-length input.
+
+---
+
+## 2.7 Acceptance criteria — Phase 2
 
 - 🧪 `SoloSpeakModel(default_config)(mel_batch)` runs without error.
 - 🧪 Output shapes are `(B, 128)` for both `z_c` and `z_s`.
@@ -2007,20 +2781,28 @@ Every stage implements:
     compute_loss()       -> stage-specific loss
     on_epoch_end()       -> eval, logging, save checkpoints
     go_no_go_check()     -> run gate criterion, returns (passed_min, passed_target)
+    run()                -> full training loop; returns path to saved checkpoint
 """
 from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import ClassVar
 
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
 
 from solospeak.utils.config import SoloSpeakConfig
+from solospeak.utils.types import LossDict, MetricsDict, StageBatch
 
 
 class TrainingStage(ABC):
-    stage_id: int
-    stage_name: str
+    # ClassVar annotations are required for mypy strict — these are subclass-level
+    # constants, not per-instance attributes.
+    stage_id: ClassVar[int]
+    stage_name: ClassVar[str]
+    min_gate_metric: ClassVar[str]
+    min_gate_threshold: ClassVar[float]
+    target_gate_threshold: ClassVar[float]
 
     def __init__(self, config: SoloSpeakConfig) -> None:
         self.config = config
@@ -2031,24 +2813,103 @@ class TrainingStage(ABC):
     @abstractmethod
     def build_model(self) -> nn.Module: ...
     @abstractmethod
-    def compute_loss(self, batch: dict, step: int) -> dict[str, torch.Tensor]: ...
+    def compute_loss(self, batches: StageBatch, step: int) -> LossDict: ...
     @abstractmethod
-    def on_epoch_end(self, epoch: int) -> dict[str, float]: ...
+    def on_epoch_end(self, epoch: int) -> MetricsDict: ...
     @abstractmethod
-    def go_no_go_check(self, metrics: dict[str, float]) -> tuple[bool, bool]:
+    def go_no_go_check(self, metrics: MetricsDict) -> tuple[bool, bool]:
         """Returns (passed_min, passed_target)."""
         ...
 
+    @abstractmethod
     def run(self) -> Path:
-        """Main training loop. Returns path to saved checkpoint."""
+        """Full training loop. Returns path to saved checkpoint.
+
+        Responsibilities of each concrete stage implementation:
+          1. Call prepare_data() and build_model().
+          2. Iterate over epochs; build a StageBatch and call compute_loss() with grad clip.
+          3. Call on_epoch_end() after each epoch; log via W&B callbacks.
+          4. Write a checkpoint every config.training.checkpoint_every_steps steps.
+          5. Call go_no_go_check() at end; raise RuntimeError on MIN-gate failure.
+          6. Return the Path of the final saved checkpoint.
+        """
         ...
 ```
+
+**StageBatch convention.** Every concrete stage passes batches to `compute_loss()` as a
+dict keyed by logical stream:
+
+- Stage 1: `{"gsc": gsc_batch}`
+- Stages 2–4: `{"content": content_batch, "speaker": speaker_batch}`
+- Stage 5: `{"quadrant": quadrant_batch}`
+- Stage 6: `{"distill": distill_batch}` and, if available, `{"quadrant": quadrant_batch}`
+
+This avoids the old single-batch ambiguity that made the Stage 2 interleaved content /
+speaker routing easy to implement incorrectly.
 
 ### 3.1.2 Trainer orchestrator
 
 `solospeak/training/trainer.py` runs stages sequentially, supports `--resume-from`, and aborts on MIN-gate failure (not TARGET-gate failure).
 
-### 3.1.3 Checkpoint handoff
+### 3.1.3 Training-only wrapper
+
+`solospeak/training/training_wrapper.py` owns every module that is needed during
+training but must not appear in the deployed ONNX graph.
+
+```python
+"""Training wrapper around SoloSpeakModel.
+
+SoloSpeakModel is the deployable model: backbone + content head + speaker head +
+fusion MLP. This wrapper adds auxiliary word/speaker classifiers and adversarial
+probe heads for Stages 2-4. Export code must load only wrapper.model.state_dict()
+into a clean SoloSpeakModel.
+"""
+import torch
+from torch import nn
+
+from solospeak.losses.adversarial import AdversarialProbeHead, grad_reverse
+from solospeak.models.heads import AuxiliaryHeads
+from solospeak.models.solospeak import SoloSpeakModel
+from solospeak.utils.config import SoloSpeakConfig
+
+
+class TrainingWrapper(nn.Module):
+    def __init__(self, config: SoloSpeakConfig) -> None:
+        super().__init__()
+        if config.training.n_aux_word_classes is None:
+            raise ValueError("training.n_aux_word_classes must be injected from STATS.json")
+        if config.training.n_aux_speaker_classes is None:
+            raise ValueError("training.n_aux_speaker_classes must be injected from STATS.json")
+        self.model = SoloSpeakModel(config)
+        embed_dim = config.heads.content_dim
+        n_words = config.training.n_aux_word_classes
+        n_speakers = config.training.n_aux_speaker_classes
+        self.aux_heads = AuxiliaryHeads(embed_dim, n_words, n_speakers)
+        self.content_adversary = AdversarialProbeHead(embed_dim, n_speakers)
+        self.speaker_adversary = AdversarialProbeHead(embed_dim, n_words)
+
+    def forward(self, mel: torch.Tensor, adv_lambda: float = 0.0) -> dict[str, torch.Tensor]:
+        z_c, z_s = self.model(mel)
+        word_logits, speaker_logits = self.aux_heads(z_c, z_s)
+        return {
+            "z_c": z_c,
+            "z_s": z_s,
+            "word_logits": word_logits,
+            "speaker_logits": speaker_logits,
+            "speaker_from_content_logits": self.content_adversary(grad_reverse(z_c, adv_lambda)),
+            "word_from_speaker_logits": self.speaker_adversary(grad_reverse(z_s, adv_lambda)),
+        }
+
+    def deployable_state_dict(self) -> dict[str, torch.Tensor]:
+        """Return only the clean SoloSpeakModel weights for Stage 5/6/export."""
+        return self.model.state_dict()
+```
+
+**Checkpoint rule.** Stage 2-4 checkpoints store both `wrapper_state` and
+`model_state`. `model_state` is the deployable `SoloSpeakModel` state from
+`deployable_state_dict()`. Phase 5 export MUST ignore `wrapper_state`.
+
+### 3.1.4 Checkpoint handoff
 
 ```
 checkpoints/
@@ -2065,11 +2926,30 @@ Each checkpoint stores `{model_state, optimizer_state, config_snapshot, step, me
 
 **Kaggle-session resilience.** Checkpoints are written every 500 steps to local session storage AND uploaded to a `solospeak-checkpoints` Kaggle dataset every 2,000 steps. `run_stage.py` automatically resumes from the latest available checkpoint on session start.
 
-### 3.1.4 W&B integration
+### 3.1.5 W&B integration
 
 `solospeak/training/callbacks.py` logs:
 - Every N steps: `train/loss_<component>` for each loss term, `train/lr`, `train/grad_norm`, `gpu/memory_allocated_mb`.
 - Every epoch: `dev/ta_clean`, `dev/ta_noisy_avg`, `dev/fa_per_hour_per_user`, `dev/probe_speaker_on_content`, `dev/probe_word_on_speaker`.
+
+### 3.1.6 Temporary TA protocol before fusion training
+
+Stages 2–4 gate on task accuracy before the learned fusion MLP has been trained. To keep
+those gates reproducible, they use a fixed proxy decision protocol:
+
+1. Build simulated dev profiles from `dev_content.csv`: 5 enrollment utterances per
+   `(speaker_id, keyword_text)` profile and held-out utterances for Q1/Q2/Q3/Q4 trials.
+2. Compute `content_template` and `speaker_template` exactly as in 3.6.2.
+3. For each trial, compute cosine scores `s_c` and `s_s`.
+4. Use `proxy_score = min(s_c, s_s)` as the pre-fusion accept score.
+5. Calibrate a per-profile `tau_proxy` on a held-out calibration split by choosing the
+   lowest threshold that keeps estimated FA/hr/user ≤ 2.0.
+6. Report `dev/ta_clean` and `dev/ta_noisy_avg` from this proxy. These metrics are used
+   only for Stage 2–4 gates and mode-collapse guards; Stage 5 replaces the proxy with
+   the learned `GatedFusionMLP`.
+
+This protocol prevents an implementing agent from inventing a different temporary
+decision rule for each stage.
 
 ## 3.2 Stage 1 — Backbone Pretraining
 
@@ -2078,6 +2958,9 @@ Each checkpoint stores `{model_state, optimizer_state, config_snapshot, step, me
 **Data.** GSC v2, 35-class classification.
 **Loss.** Cross-entropy.
 **Architecture.** SoloSpeakResNet backbone + linear classifier (the classifier is discarded at end of stage; only the backbone weights are passed to Stage 2).
+**Class count.** Load `TrainingConfig.n_gsc_classes` from
+`data/manifests/STATS.json["n_gsc_classes"]`; this must be 35 for both smoke and full
+GSC v2. Do not reuse `n_aux_word_classes` for the Stage-1 classifier.
 **Duration estimate.** ~12 hours on A100, ~36 hours on T4. Budget 3 calendar days for retries.
 **Hyperparameters.** batch=256, lr=3e-3 cosine-decayed, warmup=1000 steps, epochs=30, augmentation = `GainJitter` + `TimeShift` only (no noise yet).
 
@@ -2096,19 +2979,27 @@ If MIN not hit: see Appendix E.1.
 **Data.**
 - Content: `train_content.csv` (LibriPhrase).
 - Speaker: `train_speaker.csv` (VoxCeleb2 or Common Voice fallback).
-- **Interleaved batching.** Each step draws one ClassAwareBatch (size 128) from each loader. Both batches go through the encoder once each; SupCon-content runs on the content batch only, SupCon-speaker runs on the speaker batch only, aux CE runs on both. **Total effective batch per step: 256.**
+- **Interleaved batching.** Each step draws one ClassAwareBatch (size 128) from each
+  loader. Both batches go through the encoder once each. SupCon-content and aux word CE
+  run on the content batch only. SupCon-speaker and aux speaker CE run on the speaker
+  batch only. **Total effective batch per step: 256.** The training loop passes
+  `{"content": content_batch, "speaker": speaker_batch}` to `compute_loss()`; do not
+  concatenate the two streams before loss routing.
 
 **Loss.** `1.0 * L_supcon_c + 1.0 * L_supcon_s + 0.5 * L_aux_ce`.
 
 **Class-aware sampler is mandatory** — random sampling produces empty positive sets for SupCon and silently kills the gradient on the affected anchors.
 
-**Aux head class counts** are loaded at startup from `data/manifests/STATS.json` and injected into `TrainingConfig.n_aux_word_classes` / `n_aux_speaker_classes`. **Never hardcode** these.
+**Aux head class counts** are loaded at startup from `data/manifests/STATS.json` and
+injected into `TrainingConfig.n_aux_word_classes` / `n_aux_speaker_classes`.
+**Never hardcode** these. `n_aux_word_classes` is the LibriPhrase wake-phrase count, not
+the GSC class count and not a transcript vocabulary for VoxCeleb/Common Voice.
 
 **Duration estimate.** ~5 days on T4.
 **Hyperparameters.** lr=1e-3 (lower than Stage 1, the backbone is pretrained); backbone LR = 0.1× head LR (discriminative LR).
 
 **Gate.**
-- **MIN:** Dev clean TA ≥ 90%.
+- **MIN:** Dev clean TA ≥ 90% using the proxy protocol in 3.1.6.
 - **TARGET:** ≥ 96%.
 
 ## 3.4 Stage 3 — Disentanglement Turn-On
@@ -2126,7 +3017,10 @@ lambda_ortho(step) = 0.1 * min(1.0, step / 5000)
 lambda_adv(step)   = 0.1 * min(1.0, step / 5000)
 ```
 
-**Adversarial probe heads.** Two MLPs (256 hidden, see 2.3.3) trained behind grad-reverse. Discarded at end of stage.
+**Adversarial probe heads.** Two MLPs (256 hidden, see 2.3.3) trained behind
+grad-reverse. Discarded at end of stage. Use the same valid-label routing as 2.3.4:
+speaker-ID adversarial CE is computed on speaker-batch labels, and word adversarial CE is
+computed only on labels where `keyword_label != -100`.
 
 ### 3.4.1 Disentanglement metric — relative reduction
 
@@ -2150,7 +3044,9 @@ lambda_adv(step)   = 0.1 * min(1.0, step / 5000)
 - **MIN:** `reduction_c ≥ 0.30` AND `reduction_s ≥ 0.30` (probe accuracy drops by at least 30% relative).
 - **TARGET:** `reduction_c ≥ 0.60` AND `reduction_s ≥ 0.60`.
 
-**Mode collapse guard.** Also assert `dev clean TA ≥ 0.95 * (Stage 2 TA)` — i.e. disentanglement did not destroy task accuracy by more than 5%.
+**Mode collapse guard.** Also assert `dev clean TA ≥ 0.95 * (Stage 2 TA)` using the
+same proxy protocol from 3.1.6 — i.e. disentanglement did not destroy task accuracy by
+more than 5%.
 
 ### 3.4.2 Failure modes
 
@@ -2170,7 +3066,8 @@ lambda_adv(step)   = 0.1 * min(1.0, step / 5000)
 **Duration estimate.** ~3 days.
 
 **Gate.**
-- **MIN:** Dev noisy macro-TA (mean over 8 SNR buckets) ≥ 80%.
+- **MIN:** Dev noisy macro-TA (mean over 8 SNR buckets) ≥ 80% using the proxy protocol
+  from 3.1.6.
 - **TARGET:** ≥ 88%.
 
 ### 3.5.1 Hard-negative refresh
@@ -2192,21 +3089,119 @@ For 20 simulated users built from LibriPhrase dev set:
 - **Q2 (imposter):** `(user_keyword, other_voice)` — label 0.
   - Same keyword spoken by a non-enrolled speaker; similarity computed against the user's templates.
 - **Q3 (wrong word, right voice):** `(phonetic_neighbor, user_voice)` — label 0.
-  - Phonetic neighbors generated via `g2p_en` (minimum phoneme edit distance ≤ 2). If real utterances of the neighbor by the user don't exist, **synthesize them via Parler-TTS using the user's TTS-augmented variant** (Phase 5 enrollment service). The synthesis source is recorded so we can also report Q3 metrics on real-only data.
+  - Phonetic neighbors generated via `g2p_en` (minimum phoneme edit distance ≤ 2).
+    Prefer real utterances from the enrolled speaker. If real utterances do not exist,
+    synthetic rows are allowed only under the TTS policy below.
 - **Q4 (background):** `(other_keyword, other_voice)` — label 0.
 
-5,000 samples per quadrant. Class-balanced.
+**Target: 5,000 samples per quadrant. Class-balanced.** Achieved via the following explicit rules:
+
+- **Q1** (20 users × 10 utterances = 200 direct samples): augment each sample 25× using the waveform augmenters from 1.4.1 (AddNoise, ConvolveRIR, GainJitter, TimeShift, PitchShift) to reach ~5,000 samples.
+- **Q2** (same keyword, non-enrolled speaker): for each of the 20 enrolled users, draw 10 non-enrolled speakers from the LibriPhrase dev set × 10 utterances each = 2,000 samples; augment 2.5× to reach ~5,000.
+- **Q3** (phonetic neighbor, enrolled voice): for each user expand across up to 5 phonetic neighbors × available utterances. If real utterances are insufficient, generate synthetic rows only under the TTS policy below. Augment until 5,000 is reached. Record the real/synth source per sample and set `q3_gate_eligible` according to the hard-gate rule below.
+- **Q4** (other keyword, other speaker): draw freely from all non-enrolled keyword × non-enrolled speaker pairs in the dev set; subsample to exactly 5,000.
+
+**Stage-5 split rule — no fusion-data leakage.** Build candidate quadrant examples from
+LibriPhrase dev, then split by `profile_id` (not by individual augmented row) into:
+
+- `stage5_train_quadrants.csv` — trains only the fusion MLP.
+- `stage5_calibration_quadrants.csv` — early stopping and global/default-threshold
+  sanity checks only; it must not provide profile-specific thresholds for the dev gate.
+- `stage5_dev_quadrants.csv` — the only split used for the Stage-5 MIN/TARGET gate.
+
+All augmentations and synthetic variants inherit the split of their source
+`profile_id` / base row. Do not allow augmented siblings, TTS variants, or held-out
+utterances from the same enrolled profile to cross between train/calibration/dev; that
+would leak profile-specific similarity statistics into the gate.
+
+**Threshold ownership rule.** Stage 5 trains the fusion MLP and may use
+`stage5_calibration_quadrants.csv` for early stopping, model selection, or choosing a
+single global fallback/default threshold. It does NOT persist per-profile `tau` values
+for Stage-5 dev profiles. Per-profile thresholds are computed only when a profile is
+created for enrollment/evaluation, using that profile's own held-out calibration
+negatives as described in 3.6.2 and 4.1.2.
+
+**Stage-5 dev threshold rule.** The Stage-5 quadrant gate uses one global threshold
+`tau_stage5`, not per-profile thresholds. Compute `tau_stage5` by sweeping thresholds
+from 0.01 to 0.99 on `stage5_calibration_quadrants.csv` and choosing the value that
+maximizes macro-average quadrant accuracy over Q1/Q2/Q3/Q4 after excluding
+`q3_gate_eligible=false` Q3 rows. Break ties by choosing the highest threshold, which is
+the lower-false-accept option. Apply this single threshold unchanged to
+`stage5_dev_quadrants.csv`. If the calibration split is unavailable in a smoke test, use
+`tau_stage5 = 0.5` and mark the metric as smoke-only.
+
+Full (non-smoke) calibration denominator rule: `stage5_calibration_quadrants.csv` must
+contain at least 500 `Q3_wrong_word` rows with `q3_gate_eligible=true`, drawn from at
+least 5 distinct `profile_id` values. If it does not, data construction fails before
+threshold selection. Do not let the global threshold be chosen mostly by Q1/Q2/Q4.
+
+**TTS policy for Q3.** Parler-TTS is a descriptive/speaker-prompted TTS model, not an
+arbitrary zero-shot voice-cloning backend for enrolled users. Therefore:
+
+- Real Q3 rows (`trial_source=real`) are the primary "wrong word, right voice" metric.
+- A synthesized row may count as right-voice Q3 only if the synthesis backend actually
+  conditions on the enrolled user's audio (for example a supported voice-cloning or
+  fine-tuned TTS path) and the generated clip passes a speaker-similarity check against
+  the user's speaker template.
+- Parler-TTS-only rows are allowed as a disclosed stress test for wrong-word content
+  confusion, but they must remain in the `q3_rejection_synth` bucket and must not be
+  mixed into the hard right-voice Q3 gate unless the speaker-similarity check passes.
+
+**Q3 hard-gate rule.** The Stage-5 Q3 MIN/TARGET gate and the headline
+`q3_rejection` metric include only:
+- real right-voice Q3 rows (`trial_source=real`), and
+- synthetic Q3 rows whose synthesis backend conditioned on enrolled-user audio AND whose
+  output passed the speaker-similarity verification.
+
+Generic Parler-TTS rows that are descriptive-prompt-only are reported in
+`q3_rejection_synth` as a stress bucket, but they are excluded from the hard right-voice
+Q3 gate and from the headline `q3_rejection` numerator/denominator.
+
+The manifest columns are the source of truth:
+- `q3_gate_eligible=true` for real right-voice Q3 rows and for verified synthetic rows
+  that count in the hard gate.
+- `q3_gate_eligible=false` for generic TTS stress rows.
+- `synthesis_backend` is blank for real rows and names the backend for synthetic rows.
+- `speaker_verification_score` is blank for real rows and stores the cosine similarity
+  used to verify synthetic right-voice rows.
+
+Minimum denominator rule for full (non-smoke) validation:
+`stage5_dev_quadrants.csv` must contain at least 500 `Q3_wrong_word` rows with
+`q3_gate_eligible=true` after augmentation, drawn from at least 5 distinct `profile_id`
+values. `test_kpi.csv` must contain at least 100 eligible Q3 rows. If either denominator
+is smaller, data construction fails and the gate is NO-GO; do not silently pass Q3 on an
+empty or stress-only subset. Smoke manifests may use the tiny counts from 1.2.5 and must
+mark any Q3 metric as smoke-only.
+
+**Implementation dependency.** Stage 5 may use `solospeak/enrollment/tts_augmentation.py`
+to synthesize Q3 neighbors when real utterances are unavailable, subject to the TTS
+policy above. Create the minimal TTS helper by Level 4; the reusable enrollment template
+and calibration helpers also land by Level 4 so Stage 5 does not duplicate template math.
+
+The generated Stage-5 quadrant manifest uses the canonical schema from 1.2.1. In
+particular, `speaker_id` / `keyword_text` describe the trial audio, while
+`enrolled_user_id`, `enrolled_keyword_text`, `profile_id`, and `profile_path` describe
+the enrollment target. Q3 synthesized rows must set `trial_source=tts`; real Q3 rows set
+`trial_source=real`. The `q3_gate_eligible`, `synthesis_backend`, and
+`speaker_verification_score` columns decide whether each row belongs to the hard
+right-voice Q3 gate or only to the disclosed synthetic stress bucket.
 
 **Loss.** Binary cross-entropy on fusion output.
 **Duration.** ~12 hours (the fusion MLP is tiny).
 
 **Gate.**
-- **MIN:** All four per-quadrant accuracies ≥ 85% on the dev set.
+- **MIN:** All four hard-gate quadrant accuracies ≥ 85% on
+  `stage5_dev_quadrants.csv` using the single global `tau_stage5`; Q3 uses the
+  `q3_gate_eligible=true` subset above, while generic Parler-TTS stress rows are
+  reported separately.
 - **TARGET:** Q1 ≥ 96%, Q2/Q3/Q4 ≥ 95%.
 
 ### 3.6.2 Per-user threshold calibration
 
-The fusion threshold τ is NOT learned globally. Stage 5 outputs a default `τ = 0.5`. Per-user calibration happens at enrollment time (Phase 5).
+The fusion threshold τ is NOT learned as part of the fusion MLP. Stage 5 may report a
+global fallback/default threshold for sanity checks, but per-user calibration happens
+when an enrollment/eval profile is created (Phase 5 / KPI evaluation). The Stage-5
+calibration split must not overwrite the per-profile calibration procedure below.
 
 **Enrollment/template math.**
 1. For each accepted enrollment recording, compute `(z_c_i, z_s_i)`.
@@ -2224,8 +3219,15 @@ The fusion threshold τ is NOT learned globally. Stage 5 outputs a default `τ =
 
 **Purpose.** Fine-tune the model so the final INT8 export matches FP32 within tolerance.
 
-**Data.** Same as Stage 4.
-**Loss.** Stage 4 loss + a distillation term against the Stage 5 FP32 model (KL divergence on `z_c` and `z_s` similarities to a fixed reference).
+**Data.** Stage-4-style augmented waveform windows for embedding stability plus the
+Stage-5 quadrant/calibration rows when fusion-score supervision is available.
+**Loss.** Clean-model distillation against the Stage-5 FP32 teacher:
+- embedding similarity distillation on `z_c` and `z_s` against a fixed reference bank;
+- optional BCE on `fusion_score` for rows with `quadrant_label`;
+- optional MSE/KL on teacher vs student `(content_score, speaker_score, fusion_score)`.
+
+Stage 6 does **not** reuse Stage-4 aux/adversarial CE. The QAT-prepared module is a clean
+`SoloSpeakModel`, so training-only auxiliary and adversarial heads are absent by design.
 **Duration.** ~12 hours.
 
 **Gate.**
@@ -2244,10 +3246,10 @@ weights, per-tensor for activations). This combines the accuracy benefit of QAT 
 production-friendly tooling of ONNX RT.
 
 ```python
-# Stage 6: short fake-quant QAT fine-tune
+# Stage 6: short fake-quant QAT fine-tune on the clean deployable model
 model_fp32.qconfig = torch.ao.quantization.get_default_qat_qconfig("fbgemm")
 model_prepared = torch.ao.quantization.prepare_qat(model_fp32, inplace=False)
-# ... ~5 epochs of fine-tuning ...
+# ... ~5 epochs of distillation/fusion fine-tuning ...
 # Copy the trained float weights into a clean, non-prepared SoloSpeakModel with the
 # same architecture. This strips FakeQuant/Observer modules while preserving the
 # quantization-adapted FP32 weights. Do NOT call convert() for the checkpoint that
@@ -2267,11 +3269,50 @@ the original clean modules and skips `activation_post_process`, `fake_quant`, an
 state. Unit test it by asserting the clean model exports to ONNX and has no modules whose
 class name contains `FakeQuant` or `Observer`.
 
+**`copy_float_weights_from_prepared` contract** — lives in `solospeak/training/stages/stage6_qat.py`:
+
+```python
+def copy_float_weights_from_prepared(
+    prepared: nn.Module,
+    target: nn.Module,
+) -> None:
+    """Copy float weights from a QAT-prepared model into a clean target model.
+
+    Iterates `target.named_parameters()` and `target.named_buffers()`. For each
+    name, looks up the matching parameter/buffer in `prepared` (same dotted path)
+    and copies its data. Names that include 'activation_post_process', 'fake_quant',
+    or 'observer' in any path component are skipped — they do not exist in `target`.
+
+    Raises ValueError if a name present in `target` is missing from `prepared`
+    (which indicates an architecture mismatch — fix the model, not this function).
+    """
+    target_params = dict(target.named_parameters())
+    target_bufs   = dict(target.named_buffers())
+    src_params = dict(prepared.named_parameters())
+    src_bufs   = dict(prepared.named_buffers())
+
+    for name, param in target_params.items():
+        if name not in src_params:
+            raise ValueError(f"Prepared model missing parameter: {name!r}")
+        param.data.copy_(src_params[name].data)
+
+    for name, buf in target_bufs.items():
+        if name not in src_bufs:
+            raise ValueError(f"Prepared model missing buffer: {name!r}")
+        buf.data.copy_(src_bufs[name].data)
+```
+
+🧪 **Test:** `tests/unit/test_deployment.py::test_copy_float_weights_from_prepared`
+- Prepare a tiny `SoloSpeakModel` with `prepare_qat`, mutate its float weights, call
+  `copy_float_weights_from_prepared`, assert the target weights match the mutated values.
+- Assert the target has no modules whose `type(m).__name__` contains `"FakeQuant"` or `"Observer"`.
+
 **Stage-6 gate implementation.** To measure the gate, Stage 6 runs a temporary
 export-and-quantize check into `artifacts/tmp_stage6_int8.onnx` using the same calibration
-settings as Phase 5, evaluates dev TA against the temporary FP32 ONNX, records the
-degradation in the checkpoint metrics, then deletes or overwrites the temporary artifact.
-Phase 5 still owns the final production export.
+settings as Phase 5, also exports `artifacts/tmp_stage6_fp32.onnx`, and calls the same
+INT8-vs-FP32 degradation checker with both paths. It records the degradation in the
+checkpoint metrics, then deletes or overwrites both temporary artifacts. Phase 5 still
+owns the final production export.
 
 ## 3.8 Stage Runner Script
 
@@ -2303,8 +3344,11 @@ Usage:
 # Phase 4: Evaluation Infrastructure
 
 **Duration:** Days 33–37.
-**Goal:** Full KPI suite, ablations, subgroup eval, probe verification all implemented and reproducible.
-**Exit criterion:** `make eval` runs in ≤ 1 hour on a single GPU and produces `reports/kpi_final.json` + `reports/ablation_table.md`.
+**Goal:** Full KPI suite, subgroup eval, probe verification, and ablation tooling are implemented and reproducible.
+**Exit criterion:** `make eval` runs in ≤ 1 hour on a single GPU and produces
+`reports/kpi_final.json`, `reports/probes.json`, and `reports/subgroup_report.md`.
+`make ablation` is a separate long-running reporting command; it produces
+`reports/ablation_table.md` but is not part of the one-hour eval contract.
 
 ## 4.1 Full KPI Suite
 
@@ -2318,23 +3362,27 @@ One call, one JSON output:
     ta_noisy                 dict[int, float]   # per-SNR
     ta_noisy_macro           float              # mean across SNRs
     fa_per_hour_per_user     float
-    fa_per_hour_device       float              # = per_user * n_enrolled_users
+    fa_per_hour_device       dict[int, float]   # N enrolled users -> fa/hr; N ∈ {1, 4, 8}
     q2_rejection             float
-    q3_rejection             float
+    q3_rejection             float              # real + speaker-verified synth weighted average
+    q3_rejection_real        float              # real utterances only
+    q3_rejection_synth       float              # all synthesized Q3 stress rows, separate from hard gate
     q4_rejection             float
     distance_ta              dict[float, float]
     param_count              int
     xrt_fp32                 float
     xrt_int8                 float
-    per_demographic          dict[str, dict]        # OPTIONAL subgroup summaries — see 4.4
+    per_demographic          SubgroupDict           # subgroup -> metrics, or null if unavailable
 """
 ```
 
 ### 4.1.2 Measurement protocols
 
-**TA Clean.** 500 (user, keyword) pairs from `test_kpi.csv`; 10 utterances per user; per-user threshold τ calibrated on a held-out rejection sample. Report mean ± std over 3 seeds.
+**TA Clean.** ~50 (user, keyword) pairs from `test_kpi.csv` (Q1 rows ≈ 485 total; see manifest example in 1.2.5); 10 utterances per pair ≈ 485 Q1 evaluation samples. Per-user threshold τ calibrated on a held-out rejection sample. Report mean ± std over 3 seeds.
 
-**TA Noisy.** Same 500 pairs, mixed with MUSAN babble/traffic/music at SNRs `{-5, 0, 5, 10, 15, 20, 25, 30}` dB. Report per-SNR and macro-mean.
+**Note on sample count.** `test_kpi.csv` has ~1,940 rows (485 per quadrant), covering ~50 keywords × ~98 speakers. "500 pairs" referred to Q1+Q2+Q3+Q4 combined, not 500 Q1 pairs. The correct interpretation is ~50 enrolled (user, keyword) pairs × ~10 utterances each = ~485 Q1 samples.
+
+**TA Noisy.** Same ~50 enrolled (user, keyword) pairs (~485 Q1 samples, as clarified above), mixed with MUSAN babble/traffic/music at SNRs `{-5, 0, 5, 10, 15, 20, 25, 30}` dB. Report per-SNR and macro-mean.
 
 **FA per hour.** v1 was ambiguous about per-user vs device. v2 reports both:
 - `fa_per_hour_per_user = total_wakes_for_user / 10.0` for a single-enrolled-user setup.
@@ -2342,9 +3390,18 @@ One call, one JSON output:
 
 **Q2 Rejection.** Test utterances where the correct keyword is spoken by a non-enrolled speaker. Rejection rate = fraction correctly rejected.
 
-**Q3 Rejection.** Test utterances where a phonetically similar but different keyword is spoken by the enrolled user. Two variants reported:
-- `q3_rejection_real`: only on real (non-synthesized) utterances of the neighbor word.
-- `q3_rejection_synth`: includes Parler-TTS synthesized neighbors.
+**Q3 Rejection.** Test utterances where a phonetically similar but different keyword is
+spoken by the enrolled user. The manifest columns are the source of truth:
+- `q3_rejection_real`: rows with `quadrant_class == "Q3_wrong_word"` and
+  `trial_source == "real"`.
+- `q3_rejection_synth`: rows with `quadrant_class == "Q3_wrong_word"` and
+  `trial_source == "tts"`, reported as a separate synthetic stress bucket.
+- headline `q3_rejection`: rows with `quadrant_class == "Q3_wrong_word"` and
+  `q3_gate_eligible == true`.
+
+Do not recompute speaker verification during KPI aggregation. The profile/template
+builder owns verification and records the result in `q3_gate_eligible` and
+`speaker_verification_score`.
 
 **Q4 Rejection.** Other keyword by other speaker. Rejection rate.
 
@@ -2380,6 +3437,11 @@ One call, one JSON output:
 ### 4.3.3 Output: `reports/ablation_table.md`
 
 Markdown table, one row per ablation, columns: clean TA, noisy macro TA, FA/hr/user, Δ vs full. Include a "seeds" column documenting how many seeds backed the row.
+
+**Command separation.** `make eval` MUST NOT launch ablation training. `make ablation`
+is the only command that runs `scripts/run_ablation.py`, and it is allowed to take days.
+The final report should include `reports/ablation_table.md` when available; if compute
+runs out, report the completed subset with the missing rows marked `not_run`.
 
 ## 4.4 Subgroup Evaluation
 
@@ -2420,9 +3482,10 @@ The HARD validation gate in Phase 5.3 is `xrt_int8 < 0.20`. The STRETCH target o
 
 ### 4.5.1 Acceptance criteria — Phase 4
 
-- 🧪 `make eval` finishes in ≤ 1 hour on a single GPU.
+- 🧪 `make eval` finishes in ≤ 1 hour on a single GPU and does not launch ablation training.
 - 🧪 `reports/kpi_final.json` has all required fields.
-- 🧪 `reports/ablation_table.md` has 7 rows.
+- 🧪 `reports/probes.json` and `reports/subgroup_report.md` are written.
+- 🧪 `make ablation` writes `reports/ablation_table.md` with 7 rows when all configured ablations finish. This is report-critical but not part of the `make eval` runtime gate.
 - 🧪 All KPIs meet the relevant MIN gates from Phase 3 and `ValidationGates` on the test set.
 - 🧪 Probe reduction ≥ MIN(0.30).
 
@@ -2432,7 +3495,7 @@ The HARD validation gate in Phase 5.3 is `xrt_int8 < 0.20`. The STRETCH target o
 
 **Duration:** Days 38–41.
 **Goal:** Validated INT8 ONNX artifact passing all gates; live demo runs on real audio.
-**Exit criterion:** `make export` produces `artifacts/solospeak_int8.onnx` (size ≤ 5 MB) that passes all 9 validation gates; the CLI demo emits a wake event within 250 ms after the decisive window is available.
+**Exit criterion:** `make export` produces `artifacts/solospeak_int8.onnx` (size ≤ 5 MB) that passes all 9 required validation gates plus Gate 10 (INT8 vs FP32 degradation, using the freshly exported `artifacts/solospeak_fp32.onnx` as `fp32_onnx_path`); the CLI demo emits a wake event within 250 ms after the decisive window is available.
 
 ## 5.1 ONNX Export
 
@@ -2469,6 +3532,51 @@ Export uses a small `ExportWrapper` around `SoloSpeakModel`: it calls
 templates, then calls `model.forward_fusion(s_c, s_s)`. The training-time
 `SoloSpeakModel.forward()` contract remains unchanged.
 
+`ExportWrapper` is defined inside `solospeak/deployment/export_onnx.py` (not in
+`solospeak/models/`) and is instantiated only during the export step. It is never saved
+as a checkpoint:
+
+```python
+# solospeak/deployment/export_onnx.py — ExportWrapper (defined at module level)
+import torch
+import torch.nn.functional as F
+from torch import nn
+
+from solospeak.models.solospeak import SoloSpeakModel
+
+
+class ExportWrapper(nn.Module):
+    """Wraps SoloSpeakModel for ONNX export.
+
+    Accepts three inputs (mel, content_template, speaker_template), runs the
+    encoder, computes safe cosine scores, and returns all five outputs.
+    Never instantiated outside of export_onnx.py.
+    """
+
+    def __init__(self, model: SoloSpeakModel) -> None:
+        super().__init__()
+        self.model = model
+
+    def forward(
+        self,
+        mel: torch.Tensor,               # (B, 1, 80, 160)
+        content_template: torch.Tensor,  # (B, 128) L2-normalized
+        speaker_template: torch.Tensor,  # (B, 128) L2-normalized
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        z_c, z_s = self.model(mel)
+        # Safe cosine: clamp denominator so zero-template callers don't produce NaN.
+        ct = content_template / content_template.norm(dim=-1, keepdim=True).clamp(min=1e-8)
+        st = speaker_template / speaker_template.norm(dim=-1, keepdim=True).clamp(min=1e-8)
+        s_c = (z_c * ct).sum(dim=-1)           # (B,)
+        s_s = (z_s * st).sum(dim=-1)           # (B,)
+        fusion_score = self.model.forward_fusion(s_c, s_s)  # (B,)
+        return z_c, z_s, s_c, s_s, fusion_score
+```
+
+🧪 **Test:** `tests/integration/test_onnx_roundtrip.py` must verify that the ONNX graph
+exported from `ExportWrapper` has exactly the five output names listed below and that a
+zero-template forward pass does not produce `NaN` in any output.
+
 **ONNX I/O contract.**
 - Inputs:
   - `mel`: `(B, 1, 80, 160)`
@@ -2486,10 +3594,9 @@ outputs. The deployed artifact remains a single `solospeak_int8.onnx` file.
 fusion locally, for example:
 
 ```python
-torch.ao.quantization.fuse_modules(self.stem, ["0", "1", "2"], inplace=True)
-torch.ao.quantization.fuse_modules(block, ["conv1", "bn1"], inplace=True)
-torch.ao.quantization.fuse_modules(block, ["conv2", "bn2"], inplace=True)
-torch.ao.quantization.fuse_modules(block.shortcut, ["0", "1"], inplace=True)
+torch.ao.quantization.fuse_modules(self.stem, [["0", "1", "2"]], inplace=True)
+torch.ao.quantization.fuse_modules(block, [["conv1", "bn1"], ["conv2", "bn2"]], inplace=True)
+torch.ao.quantization.fuse_modules(block.shortcut, [["0", "1"]], inplace=True)
 ```
 
 Do not use a top-level example like `[['conv1', 'bn1']]`; those names do not exist on the
@@ -2513,7 +3620,7 @@ If export fails for any other reason, see Appendix E.5.
 
 Inputs:
     solospeak_fp32.onnx
-    Calibration data: 500 random samples from dev set
+    Calibration data: 500 resolved dev trials from Stage-5/KPI manifests
 
 Outputs:
     artifacts/solospeak_int8.onnx (~1.2-2.5 MB, varies with variant)
@@ -2522,9 +3629,48 @@ Outputs:
 Settings:
     - Per-channel quantization for Conv weights
     - Per-tensor for activations
-    - Fusion MLP NOT quantized (too small, preserves precision)
+    - Primary setting quantizes Conv nodes only:
+        op_types_to_quantize=["Conv"]
+      This keeps the embedding heads and fusion MLP in FP32 while quantizing the
+      latency/size-dominant backbone convolutions.
+    - Fusion MLP is never quantized (too small, preserves precision)
 """
 ```
+
+**Quantization exclusion contract.** The default implementation must call ONNX Runtime
+static quantization with `op_types_to_quantize=["Conv"]`; do not include `"Gemm"` or
+`"MatMul"` in the default quantized op list. If a later experiment quantizes linear
+layers too, the exporter must first assign stable ONNX node-name prefixes:
+
+```text
+backbone/...
+content_head/...
+speaker_head/...
+fusion_mlp/...
+score_path/...
+```
+
+Then `quantize.py` must pass every `fusion_mlp/...` and `score_path/...` node in
+`nodes_to_exclude`, and `reports/quantization_report.json` must list the excluded nodes.
+Do not rely on exporter-generated anonymous node names such as `/net/net.0/Gemm`; those
+are not a stable API.
+
+**Calibration I/O contract.** The exported ONNX graph has three inputs, so calibration
+samples are dictionaries, not bare mel arrays:
+
+```python
+{
+    "mel": np.ndarray,               # (1, 1, 80, 160), float32
+    "content_template": np.ndarray,  # (1, 128), float32, L2-normalized
+    "speaker_template": np.ndarray,  # (1, 128), float32, L2-normalized
+}
+```
+
+Use real profile templates from `profile_path` whenever available. For embedding-only
+calibration rows without profiles, pass zero templates and mark the row as such in the
+quantization report. The ORT calibration reader must yield these full input dictionaries;
+do not pass `Iterable[np.ndarray]` unless the exported graph has been changed back to a
+single-input embedding-only graph.
 
 ### 5.2.2 Accuracy verification after quantization
 
@@ -2536,9 +3682,16 @@ Run the Phase 4 KPI suite on the INT8 model. Report TA degradation vs FP32. If >
 
 ```python
 def validate(onnx_path: Path, eval_set: EvalSet,
-             config: DeploymentConfig) -> ValidationReport:
+             config: DeploymentConfig,
+             gates: ValidationGates,
+             fp32_onnx_path: Path | None = None) -> ValidationReport:
+    """Run validation gates on the INT8 artifact.
+
+    Gates 1–9 are always checked. Gate 10 (INT8 vs FP32 TA degradation) fires when
+    fp32_onnx_path is provided. Gate 10 is optional only for quick local/debug runs;
+    final Phase-5 release validation and Stage-6 temporary dev-set checks MUST pass it.
+    """
     results = []
-    gates = ValidationGates()
     results.append(check_filesize(onnx_path, max_mb=gates.max_filesize_mb))
     results.append(check_onnx_opset(onnx_path, min_opset=gates.min_opset))
     results.append(check_mobile_ops(onnx_path))
@@ -2550,12 +3703,24 @@ def validate(onnx_path: Path, eval_set: EvalSet,
     ))
     results.append(check_param_count(onnx_path, max_params=gates.max_param_count))
     results.append(check_output_shapes(onnx_path))
+    # Gate 10: required for final release validation; optional only for quick/debug runs.
+    if fp32_onnx_path is not None:
+        results.append(check_int8_vs_fp32_degradation(
+            onnx_path, fp32_onnx_path, eval_set,
+            max_degradation_pp=gates.max_int8_vs_fp32_degradation_pp,
+        ))
 
     report = ValidationReport(results)
     if not report.all_passed:
         raise ArtifactValidationError(report)
     return report
 ```
+
+`scripts/export_and_validate.py` MUST load `ValidationGates` through
+`load_eval_config_bundle()` and pass the resulting object into `validate()`. For the
+final artifact produced by `make export`, it MUST call
+`validate(..., gates=gates, fp32_onnx_path=fp32_path)`. Calling `validate()` without
+`fp32_onnx_path` is reserved for fast local checks while iterating on gates 1–9.
 
 `[DECISION]` v1 used aspirational thresholds (0.99 clean TA, 0.08 xRT, 1.0 FA/hr) as HARD blockers. That guarantees the artifact will fail. v2 uses MIN gates for validation and tracks TARGET/STRETCH separately in the report. The TARGET numbers go in the report; the HARD gates here decide whether the bits are safe to flash.
 
@@ -2609,7 +3774,7 @@ the acceptance threshold is ≤ 250 ms for this post-window latency.
 ### 5.6.1 Acceptance criteria — Phase 5
 
 - 🧪 `make export` produces `artifacts/solospeak_int8.onnx` ≤ 5 MB.
-- 🧪 All 9 validation gates pass.
+- 🧪 All 9 required validation gates pass, and final release validation also passes Gate 10 by supplying `artifacts/solospeak_fp32.onnx` as `fp32_onnx_path`.
 - 🧪 `python demo/cli/live_demo.py --enroll --user pranav --keyword "hey prism"` succeeds.
 - 🧪 Live demo triggers on real voice within 250 ms post-window latency.
 
@@ -2619,7 +3784,7 @@ the acceptance threshold is ≤ 250 ms for this post-window latency.
 
 **Duration:** Days 42–44 (overlaps Phase 7 — production-readiness items that judges will see in the report).
 **Goal:** Every section in this phase has either (a) a working stub the judge can run or (b) an honest "planned post-hackathon" doc with design rationale. Most items are `🟡 STRETCH` or doc-only.
-**Exit criterion:** All files in `solospeak/security/` and `solospeak/observability/` exist with at least one runnable function each, and `docs/` contains the six required documents listed in 6.5.
+**Exit criterion:** All files in `solospeak/security/` and `solospeak/observability/` exist with at least one runnable function each, and `docs/` contains the seven required documents listed in 6.5.
 
 ## 6.1 Security
 
@@ -2692,7 +3857,7 @@ class SoloSpeakLocalMetrics:
     enrollment_failures: int = 0
     model_version: str = "solospeak-v1.0.0"
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, int | float | str | dict[str, int]]:
         return {
             "wake_events_total": self.wake_events_total,
             "wake_events_per_user": self.wake_events_per_user,
@@ -2865,7 +4030,7 @@ Tag the final commit `v1.0.0-phase2`. Attach:
 - `stage6_qat.pt` (Stage-6 PyTorch checkpoint).
 - `solospeak_int8.onnx` (deployment artifact).
 - `solospeak_int8_previous.onnx` (rollback slot, for the demo).
-- `kpi_final.json`, `ablation_table.md`, `subgroup_report.md`.
+- `kpi_final.json`, `probes.json`, `ablation_table.md`, `subgroup_report.md`.
 - A link to the YouTube demo video.
 
 ## 7.4 Submission Package
@@ -2943,6 +4108,7 @@ Dockerfile
 .pre-commit-config.yaml
 .github/workflows/ci.yml
 .github/workflows/eval-regression.yml
+scripts/__init__.py
 ```
 
 ## Level 1 — Configuration & types (Days 1–2)
@@ -2979,6 +4145,8 @@ data/licenses/.gitkeep
 scripts/download_datasets.py
 scripts/prepare_libriphrase.py
 scripts/prepare_manifests.py
+scripts/pack_audio_lmdb.py
+scripts/precompute_speaker_embeddings.py
 solospeak/data/__init__.py
 solospeak/data/features.py
 solospeak/data/features_deploy.py
@@ -2995,6 +4163,7 @@ tests/fixtures/audio/reference_1p6sec.wav
 data/manifests/STATS.md
 data/manifests/STATS.json
 data/manifests/keyword_vocab.json
+data/manifests/gsc_vocab.json
 data/manifests/speaker_vocab.json
 ```
 
@@ -3036,9 +4205,27 @@ solospeak/training/stages/stage3_disentangle.py
 solospeak/training/stages/stage4_robustness.py
 solospeak/training/stages/stage5_fusion.py
 solospeak/training/stages/stage6_qat.py
+solospeak/enrollment/__init__.py
+solospeak/enrollment/tts_augmentation.py
+solospeak/enrollment/calibration.py
+solospeak/enrollment/templates.py
 scripts/run_stage.py
 tests/integration/test_training_smoke.py
 ```
+
+**`run_proxy_ta` must be available at Level 4.** Stages 2–4 call `run_proxy_ta` from
+their `on_epoch_end()` implementations. `kpi_suite.py` is a Level 5 file, so the agent
+MUST implement `run_proxy_ta` by Level 4 using one of these two approaches (choose one
+and stay consistent):
+
+- **Preferred:** create `solospeak/training/proxy_eval.py` at Level 4 containing only
+  `run_proxy_ta` (signature and contract from Appendix B / §3.1.6). When Level 5 arrives,
+  `kpi_suite.py` imports and re-exports it: `from solospeak.training.proxy_eval import run_proxy_ta`.
+- **Alternative:** create `solospeak/eval/kpi_suite.py` as a Level 4 partial stub that
+  implements only `run_proxy_ta`; complete the rest of the file at Level 5.
+
+Do NOT leave `run_proxy_ta` unimplemented while writing Stage 2–4 training code — the
+`on_epoch_end()` gate check will be a no-op or crash without it.
 
 ## Level 5 — Evaluation (Days 33–37)
 
@@ -3052,10 +4239,14 @@ solospeak/eval/xrt.py
 scripts/run_eval.py
 scripts/run_ablation.py
 tests/integration/test_eval_smoke.py
-reports/kpi_final.json
-reports/ablation_table.md
-reports/subgroup_report.md
 ```
+
+**Note on `reports/` files.** `reports/kpi_final.json`, `reports/probes.json`,
+`reports/ablation_table.md`, and `reports/subgroup_report.md` are **generated output
+files**, not source files. Do NOT create placeholder versions during repo scaffolding.
+They are produced by `make eval` and `make ablation` and are committed only when those
+commands have run successfully with a trained model. Create the `reports/` directory with
+a `.gitkeep` at scaffold time.
 
 ## Level 6 — Deployment (Days 38–41)
 
@@ -3065,23 +4256,23 @@ solospeak/deployment/export_onnx.py
 solospeak/deployment/quantize.py
 solospeak/deployment/validate_artifact.py
 solospeak/deployment/ota_package.py
-solospeak/enrollment/__init__.py
 solospeak/enrollment/service.py
-solospeak/enrollment/tts_augmentation.py
-solospeak/enrollment/calibration.py
-solospeak/enrollment/templates.py
 solospeak/inference/__init__.py
 solospeak/inference/streaming.py
 solospeak/inference/hysteresis.py
 solospeak/inference/multi_user.py
 scripts/export_and_validate.py
 demo/cli/live_demo.py
-artifacts/solospeak_int8.onnx
 tests/integration/test_onnx_roundtrip.py
 tests/unit/test_enrollment.py
 tests/unit/test_inference.py
 tests/unit/test_deployment.py
 ```
+
+**Note on `artifacts/solospeak_int8.onnx`.** This is a **generated artifact** produced
+by `make export`. Do NOT create a placeholder file during scaffolding. Create the
+`artifacts/` directory with a `.gitkeep`. The final ONNX file is attached to the GitHub
+Release, not committed to git.
 
 ## Level 7 — Production hardening & docs (Days 42–44)
 
@@ -3112,6 +4303,20 @@ skills/deployment/SKILL.md
 skills/debugging/SKILL.md
 ```
 
+Each `SKILL.md` is a short markdown playbook for a human operator or AI agent working in
+that domain. They are **documentation only** — no code, no imports. Required sections per file:
+
+| File | Purpose |
+|---|---|
+| `skills/data_curation/SKILL.md` | How to add a new corpus: license check, download script pattern, manifest columns, LMDB packing |
+| `skills/training/SKILL.md` | How to run a stage, resume a checkpoint, tune hyperparameters, interpret W&B curves |
+| `skills/evaluation/SKILL.md` | How to run `make eval`, interpret KPI JSON fields, add a new metric to `kpi_suite.py` |
+| `skills/deployment/SKILL.md` | How to export ONNX, run INT8 quantization, validate gates, build the OTA package |
+| `skills/debugging/SKILL.md` | Common failure modes and their fixes (mirrors Appendix E but with more operational detail) |
+
+These files are populated over the course of the project; stubs with just the required
+section headers are sufficient at scaffold time.
+
 ---
 
 # Appendix B: Function Contracts Reference
@@ -3132,10 +4337,34 @@ class LogMelExtractorDeploy:
     # (25600,) float32 -> (1, 80, 160) float32
 
 # solospeak/data/datasets.py
+def parse_bool_csv(value: DatasetValue) -> bool: ...
+# Parses canonical manifest booleans. Accepts bool, "true", or "false"; raises otherwise.
+
+class GSCDataset(Dataset):
+    def __getitem__(self, idx: int) -> DatasetItem: ...
+    # {'wav': Tensor(25600,), 'keyword_label': int, 'keyword_text': str}
+    # keyword_label indexes gsc_vocab.json
+
 class DualHeadDataset(Dataset):
-    def __getitem__(self, idx: int) -> dict: ...
+    def __getitem__(self, idx: int) -> DatasetItem: ...
     # {'wav': Tensor(25600,), 'keyword_label': int, 'speaker_label': int,
     #  'speaker_id_raw': str, 'keyword_text': str}
+    # keyword_label may be WORD_IGNORE_INDEX (-100) for speaker-only rows
+
+class QuadrantDataset(Dataset):
+    def __getitem__(self, idx: int) -> DatasetItem: ...
+    # {'wav': Tensor(25600,), 'quadrant_label': int,  # 1=accept 0=reject
+    #  'quadrant_class': str,       # "Q1_accept"|"Q2_imposter"|"Q3_wrong_word"|"Q4_background"
+    #  'user_id': str,
+    #  'keyword_text': str,
+    #  'enrolled_keyword_text': str,
+    #  'profile_id': str,
+    #  'trial_source': str,         # "real"|"augmented"|"tts"|"background"
+    #  'q3_gate_eligible': bool,
+    #  'synthesis_backend': str,
+    #  'speaker_verification_score': float | None,
+    #  'content_template': Tensor(128,),   # L2-normalized enrollment template
+    #  'speaker_template': Tensor(128,)}   # L2-normalized enrollment template
 
 # solospeak/data/splits.py
 def assign_split(speaker_id: str, seed: int = 42,
@@ -3153,8 +4382,8 @@ class ClassAwareBatchSampler(Sampler[list[int]]):
 # solospeak/data/hard_negatives.py
 def phone_edit_distance(a: list[str], b: list[str]) -> int: ...
 def phonetic_hard_negatives(keyword: str, vocab: list[str], k: int = 10) -> list[str]: ...
-def speaker_hard_negatives(anchor_id: str, embeds: np.ndarray,
-                            ids: list[str], k: int = 10) -> list[str]: ...
+def speaker_hard_negatives(anchor_id: str, embeddings: np.ndarray,
+                            speaker_ids: list[str], k: int = 10) -> list[str]: ...
 ```
 
 ## Models
@@ -3164,10 +4393,21 @@ def speaker_hard_negatives(anchor_id: str, embeds: np.ndarray,
 class SoloSpeakResNet(nn.Module):
     def __init__(self, variant: str = "bcresnet8") -> None: ...
     def forward(self, mel: torch.Tensor) -> torch.Tensor: ...
+    def fuse_model(self) -> None: ...
     @property
     def output_channels(self) -> int: ...
 
 BCResNet = SoloSpeakResNet  # backward-compatible alias only
+
+# solospeak/models/vad.py
+class SileroVAD:
+    FRAME_SAMPLES: ClassVar[int]   # 512
+    CONTEXT_SAMPLES: ClassVar[int] # 64
+    SAMPLE_RATE: ClassVar[int]     # 16000
+    def __init__(self, onnx_path: Path, threshold: float = 0.5) -> None: ...
+    def is_speech(self, frame: np.ndarray) -> bool: ...
+    # frame: (512,) float32 — raises ValueError for wrong shape
+    def reset_state(self) -> None: ...
 
 # solospeak/models/heads.py
 class EmbeddingHead(nn.Module):
@@ -3219,8 +4459,12 @@ class AdversarialProbeHead(nn.Module):
 # solospeak/losses/combined.py
 class CombinedLoss(nn.Module):
     def __init__(self, weights: LossWeights, stage: int) -> None: ...
-    def forward(self, batch_outputs: dict, step: int) -> dict: ...
-    # Returns: {'total': Tensor, 'supcon_c': Tensor, ...}
+    def forward(self, outputs: dict[str, BatchDict],
+                batches: StageBatch, step: int) -> LossDict: ...
+    # Returns: {'total': Tensor, 'supcon_c': Tensor, 'supcon_s': Tensor,
+    #           'aux_ce': Tensor, 'ortho': Tensor, 'adv': Tensor}
+    # Stage keys: "gsc" (Stage 1), "content"/"speaker" (Stages 2-4),
+    # "quadrant" (Stage 5), "distill" plus optional "quadrant" (Stage 6).
 ```
 
 ## Training
@@ -3228,18 +4472,18 @@ class CombinedLoss(nn.Module):
 ```python
 # solospeak/training/stages/base.py
 class TrainingStage(ABC):
-    stage_id: int
-    stage_name: str
-    min_gate_metric: str
-    min_gate_threshold: float
-    target_gate_threshold: float
+    stage_id: ClassVar[int]
+    stage_name: ClassVar[str]
+    min_gate_metric: ClassVar[str]
+    min_gate_threshold: ClassVar[float]
+    target_gate_threshold: ClassVar[float]
 
-    def prepare_data(self) -> tuple[DataLoader, ...]: ...
-    def build_model(self) -> nn.Module: ...
-    def compute_loss(self, batch: dict, step: int) -> dict[str, torch.Tensor]: ...
-    def on_epoch_end(self, epoch: int) -> dict[str, float]: ...
-    def go_no_go_check(self, metrics: dict[str, float]) -> tuple[bool, bool]: ...
-    def run(self) -> Path: ...
+    def prepare_data(self) -> tuple[DataLoader, ...]: ...   # @abstractmethod
+    def build_model(self) -> nn.Module: ...                  # @abstractmethod
+    def compute_loss(self, batches: StageBatch, step: int) -> LossDict: ...  # @abstractmethod
+    def on_epoch_end(self, epoch: int) -> MetricsDict: ...  # @abstractmethod
+    def go_no_go_check(self, metrics: MetricsDict) -> tuple[bool, bool]: ...  # @abstractmethod
+    def run(self) -> Path: ...                               # @abstractmethod
 
 # solospeak/training/trainer.py
 class Trainer:
@@ -3247,6 +4491,25 @@ class Trainer:
     def run_stage(self, stage_id: int) -> Path: ...
     def run_all_stages(self) -> list[Path]: ...
     def resume_from_stage(self, stage_id: int) -> None: ...
+
+# solospeak/training/training_wrapper.py
+class TrainingWrapper(nn.Module):
+    model: SoloSpeakModel
+    aux_heads: AuxiliaryHeads
+    content_adversary: AdversarialProbeHead
+    speaker_adversary: AdversarialProbeHead
+    def __init__(self, config: SoloSpeakConfig) -> None: ...
+    def forward(self, mel: torch.Tensor, adv_lambda: float = 0.0) -> dict[str, torch.Tensor]: ...
+    def deployable_state_dict(self) -> dict[str, torch.Tensor]: ...
+
+# solospeak/training/stages/stage6_qat.py
+def copy_float_weights_from_prepared(
+    prepared: nn.Module,
+    target: nn.Module,
+) -> None: ...
+# Copies float weights from a QAT-prepared model into a clean target model.
+# Raises ValueError if a name in target is absent from prepared (architecture mismatch).
+# See §3.7 for full spec and test contract.
 ```
 
 ## Evaluation
@@ -3255,19 +4518,28 @@ class Trainer:
 # solospeak/eval/kpi_suite.py
 def run_kpi_suite(model_path: Path, eval_config: EvalConfig) -> KPIResult: ...
 
+def run_proxy_ta(model: torch.nn.Module, eval_config: EvalConfig,
+                 noisy: bool = False) -> dict[str, float]: ...
+# Stage 2-4 only. Uses the fixed pre-fusion proxy protocol from §3.1.6:
+# proxy_score = min(content cosine, speaker cosine), per-profile tau_proxy calibration.
+
 # solospeak/eval/probes.py
 def verify_disentanglement(encoder: nn.Module, probe_data: DataLoader,
-                            stage2_baseline: dict | None = None) -> dict: ...
-# Returns: {'speaker_probe_on_zc': float, 'word_probe_on_zs': float,
-#           'reduction_vs_baseline': float | None}
+                            stage2_baseline: ProbeBaseline | None = None) -> ProbeResult: ...
+# Returns: {'acc_c_post': float,       # speaker-probe accuracy on z_c
+#           'acc_s_post': float,       # word-probe accuracy on z_s
+#           'reduction_c': float | None,  # relative reduction vs Stage-2 baseline on z_c
+#           'reduction_s': float | None}  # relative reduction vs Stage-2 baseline on z_s
+# reduction_* are None when stage2_baseline is not provided.
+# Key names match the Phase 4.2 spec exactly; do not use 'reduction_vs_baseline'.
 
 # solospeak/eval/xrt.py
 def measure_xrt(onnx_path: Path, num_clips: int = 100,
-                clip_duration_s: float = 1.6, threads: int = 1) -> dict: ...
+                clip_duration_s: float = 1.6, threads: int = 1) -> XRTResult: ...
 # Returns: {'p50': float, 'p95': float, 'p99': float, 'platform': str}
 
 # solospeak/eval/ablations.py
-def run_ablations(config: AblationConfig) -> dict: ...
+def run_ablations(config: AblationConfig) -> AblationResult: ...
 ```
 
 ## Deployment
@@ -3280,11 +4552,16 @@ def export_onnx(checkpoint_path: Path, output_path: Path,
 
 # solospeak/deployment/quantize.py
 def quantize_static(fp32_onnx: Path, int8_onnx: Path,
-                    calibration_data: Iterable[np.ndarray]) -> None: ...
+                    calibration_data: Iterable[dict[str, np.ndarray]]) -> None: ...
 
 # solospeak/deployment/validate_artifact.py
 def validate(onnx_path: Path, eval_set: EvalSet,
-             config: DeploymentConfig) -> ValidationReport: ...
+             config: DeploymentConfig,
+             gates: ValidationGates,
+             fp32_onnx_path: Path | None = None) -> ValidationReport: ...
+# fp32_onnx_path enables Gate 10 (INT8 vs FP32 TA degradation check).
+# Gate 10 is required for final Phase-5 validation and Stage-6 temporary dev-set checks;
+# omitting fp32_onnx_path is allowed only for quick local/debug validation.
 ```
 
 ## Enrollment & Inference
@@ -3295,7 +4572,11 @@ class EnrollmentService:
     def enroll(self, user_id: str, keyword_text: str,
                recordings: list[np.ndarray]) -> UserProfile: ...
     def calibrate_threshold(self, profile: UserProfile,
-                             rejection_sample: np.ndarray) -> float: ...
+                             rejection_samples: list[np.ndarray]) -> float: ...
+    # rejection_samples: list of rejection waveforms, each (T,) float32.
+    # At least 10 samples recommended to sweep thresholds meaningfully.
+    # Picks the lowest threshold that keeps estimated FA/hr/user ≤ 2.0.
+    # Returns FusionConfig.tau_on as a conservative default if the list is empty.
 
 # solospeak/inference/streaming.py
 class StreamingInference:
@@ -3312,12 +4593,44 @@ class StreamingInference:
 
 The main schema is defined in **0.2.3** (`SoloSpeakConfig` and its sub-models). This appendix lists the additional config types referenced from later phases.
 
+> **⚠️ IMPLEMENTING AGENT — READ BEFORE WRITING CODE.**
+> The block below is **NOT a separate file**. It is a set of additions that must be
+> merged directly into `solospeak/utils/config.py` below the existing definitions from
+> section 0.2.3. Do NOT create a new file. Merge the new imports (`dataclass`, `field`,
+> `TypeVar`) into the existing top-level import block and append the new classes below
+> `_load_yaml_with_base`. All classes in this block reference `_load_yaml_with_base`,
+> which is already defined in 0.2.3 — it will only be in scope if the merge is done
+> correctly.
+
 ```python
 # solospeak/utils/config.py — additions to the file from 0.2.3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Literal, TypeVar
+
+import yaml
 from pydantic import BaseModel, Field
+
+
+ConfigT = TypeVar("ConfigT", bound="_YamlConfig")
+
+
+class _YamlConfig(BaseModel):
+    """Shared YAML loader for non-training config models.
+
+    Uses the same `__base__` inheritance mechanism as SoloSpeakConfig.from_yaml()
+    from section 0.2.3. Do not hand-roll separate YAML parsing in eval, ablation, or
+    deployment scripts.
+    """
+
+    @classmethod
+    def from_yaml(cls: type[ConfigT], path: Path | str) -> ConfigT:
+        data = _load_yaml_with_base(Path(path))
+        return cls.model_validate(data)
+
+    def to_yaml(self, path: Path | str) -> None:
+        with open(Path(path), "w") as f:
+            yaml.safe_dump(self.model_dump(mode="json"), f, sort_keys=False)
 
 
 @dataclass(frozen=True)
@@ -3325,8 +4638,12 @@ class EvalSet:
     """Resolved eval manifests and any loaded calibration metadata."""
     test_kpi_manifest: Path
     test_fa_manifest: Path
-    keyword_vocab: Path = Path("data/manifests/keyword_vocab.json")
-    speaker_vocab: Path = Path("data/manifests/speaker_vocab.json")
+    keyword_vocab: Path = field(
+        default_factory=lambda: Path("data/manifests/keyword_vocab.json")
+    )
+    speaker_vocab: Path = field(
+        default_factory=lambda: Path("data/manifests/speaker_vocab.json")
+    )
 
 
 @dataclass(frozen=True)
@@ -3353,7 +4670,7 @@ class ArtifactValidationError(RuntimeError):
         super().__init__("artifact validation failed")
 
 
-class EvalConfig(BaseModel):
+class EvalConfig(_YamlConfig):
     test_manifests: list[Path] = Field(
         default_factory=lambda: [Path("data/manifests/test_kpi.csv"),
                                   Path("data/manifests/test_fa.csv")]
@@ -3370,7 +4687,7 @@ class EvalConfig(BaseModel):
     q3_synthesis_fallback: bool = True   # use Parler-TTS if real utterances unavailable
 
 
-class AblationConfig(BaseModel):
+class AblationConfig(_YamlConfig):
     ablations: list[Literal["full", "no_ortho", "no_adv", "no_disent",
                              "no_tts_enroll", "no_gated_fusion", "no_curriculum"]] = Field(
         default_factory=lambda: ["full", "no_ortho", "no_adv", "no_disent",
@@ -3383,7 +4700,7 @@ class AblationConfig(BaseModel):
     max_parallel: int = 1
 
 
-class DeploymentConfig(BaseModel):
+class DeploymentConfig(_YamlConfig):
     target_platform: Literal["arm64_android", "arm64_linux", "x86_64_linux"] = "arm64_android"
     xrt_target: float = 0.08              # our stretch goal
     onnx_opset: int = 17
@@ -3394,7 +4711,7 @@ class DeploymentConfig(BaseModel):
     fuse_bn_into_conv: bool = True
 
 
-class ValidationGates(BaseModel):
+class ValidationGates(_YamlConfig):
     """Hard ship-gates for the deployed artifact. See Phase 5.3."""
     max_filesize_mb: float = 5.0
     min_opset: int = 17
@@ -3404,9 +4721,41 @@ class ValidationGates(BaseModel):
     max_fa_per_hr_per_user: float = 2.0   # was 1.0 in v1
     max_param_count: int = 3_000_000
     max_int8_vs_fp32_degradation_pp: float = 1.0   # MIN gate; TARGET 0.3
+
+
+def load_eval_config_bundle(path: Path | str) -> tuple[EvalConfig, ValidationGates]:
+    """Load `configs/eval/full_kpi_suite.yaml`.
+
+    The file's top-level keys map to EvalConfig. An optional `validation_gates`
+    child object overrides ValidationGates defaults. This keeps KPI protocol
+    settings and ship-gate thresholds in one human-editable file without forcing
+    eval scripts to parse raw dictionaries.
+    """
+    data = dict(_load_yaml_with_base(Path(path)))
+    gates_data = data.pop("validation_gates", {}) or {}
+    return EvalConfig.model_validate(data), ValidationGates.model_validate(gates_data)
 ```
 
+Implementation note: merge the import additions above into the top import block from
+0.2.3, then append the dataclasses/config classes below the existing `SoloSpeakConfig`
+helpers. Do not paste a second `from __future__ import annotations` into the middle of
+`config.py`; these contracts are valid on Python 3.10+ without postponed annotations.
+
 The numbers above are the **MIN ship-gates**. The TARGET aspirations from earlier phases are tracked separately and reported in the final KPI table but do not block shipping.
+
+**Config loading rule.** `scripts/run_eval.py`, `scripts/run_ablation.py`,
+`scripts/export_and_validate.py`, and deployment validation code MUST load these models
+through `load_eval_config_bundle()`, `AblationConfig.from_yaml()`,
+`DeploymentConfig.from_yaml()`, or `ValidationGates.from_yaml()` as appropriate. They use
+the same `__base__` deep-merge behavior as `SoloSpeakConfig`; no script may parse these
+YAML files into untyped dictionaries and then cherry-pick keys.
+
+Required YAML files:
+- `configs/eval/full_kpi_suite.yaml` maps to `EvalConfig` plus optional
+  `ValidationGates` overrides under a top-level `validation_gates` key.
+- `configs/eval/ablations.yaml` maps to `AblationConfig`.
+- Deployment/export commands may accept an explicit deployment YAML; if omitted, they use
+  `DeploymentConfig()` and `ValidationGates()` defaults from this appendix.
 
 ---
 
@@ -3423,6 +4772,7 @@ Which tests must pass at which phase, runtime budgets, and which are advancement
 | `make test` Phase-0 safe suite | 0 | Yes | < 2 min |
 | `make test-all` full integration suite | 1+ | No for Phase 0 | varies |
 | Smoke manifests (`download-data-smoke`, `prepare-manifests-smoke`) | 1 | Yes | < 30 s |
+| LMDB packing idempotency (`make pack-lmdb`) | 1 | Yes for full path | varies by corpus |
 | Feature extractor train/deploy parity (`atol=3e-3`) | 1 | Yes | < 10 s |
 | `assign_split` produces no speaker overlap | 1 | Yes | < 30 s |
 | Augmentation preserves shape/dtype/range | 1 | Yes | < 10 s |
@@ -3431,6 +4781,7 @@ Which tests must pass at which phase, runtime budgets, and which are advancement
 | `test_param_counts` for all 5 backbone variants | 2 | Yes | < 30 s |
 | `test_forward_shape` `(4,1,80,160) → (4,C,1,20)` | 2 | Yes | < 5 s |
 | `test_backward` produces finite gradients | 2 | Yes | < 10 s |
+| `test_fuse_model_export` fused backbone exports | 2 | Yes | < 30 s |
 | Head L2 norm == 1 (`atol=1e-5`) | 2 | Yes | < 5 s |
 | `test_fusion_param_count == 361` | 2 | Yes | < 1 s |
 | `test_total_param_count_bcresnet8 ∈ [1.08M, 1.125M]` | 2 | Yes | < 5 s |
@@ -3444,14 +4795,14 @@ Which tests must pass at which phase, runtime budgets, and which are advancement
 | Stage 5 MIN gate: per-quadrant ≥ 0.85 | 3 | Yes | 1 day |
 | Stage 6 MIN gate: temporary ORT INT8 vs FP32 Δ ≤ 1.0 pp | 3 | Yes | 1 day |
 | Full KPI suite on test set | 4 | Yes | < 1 hr |
-| Ablation matrix (7 × 1 seed default) | 4 | No (informational) | ≈ 14 GPU-days |
+| Ablation matrix (7 × 1 seed default) | 4 | No for `make eval`; yes for final report if compute allows | ≈ 14 GPU-days |
 | Subgroup eval: `keyword_syllable_count` only | 4 | Yes | < 30 min |
 | Subgroup eval: gender/age/accent | 4 | No | < 30 min |
 | xRT MIN gate: `< 0.20` on ARM | 4 | Yes | < 5 min |
 | xRT TARGET: `< 0.08` on ARM | 4 | No | < 5 min |
 | Final ONNX export | 5 | Yes | < 1 min |
 | INT8 quantization | 5 | Yes | < 5 min |
-| All 9 validation gates | 5 | Yes | < 30 min |
+| All 9 required validation gates + Gate 10 with `fp32_onnx_path` for final release | 5 | Yes | < 30 min |
 | Live demo enrollment (manual) | 5 | Yes | manual |
 | Live demo wake on real voice within 250 ms post-window latency (manual) | 5 | Yes | manual |
 | Replay attack baseline number | 6 | No | < 30 min |
@@ -3577,7 +4928,8 @@ The doc deliberately does NOT instruct you to lower MIN gates as a slip remedy. 
 
 # Appendix F: Changelog from v1
 
-The 38 substantive issues identified in the v1 audit, mapped to the v2 fix and the section number where the fix lives.
+The 38 substantive issues identified in the v1 audit, plus v2.1–v2.4 hardening fixes,
+mapped to the section number where the fix lives.
 
 | # | v1 issue | v2 fix | Section |
 |---|---|---|---|
@@ -3591,7 +4943,7 @@ The 38 substantive issues identified in the v1 audit, mapped to the v2 fix and t
 | 8 | Unused `field_validator` import | Removed from imports unless actually used. | 0.2.3 |
 | 9 | `solospeak.__version__` test required, but `__init__.py` content unspecified | `solospeak/__init__.py` defined explicitly with `__version__ = "0.1.0"`. | 0.2.1 |
 | 10 | Stubs raised `NotImplementedError` at import (caused import-time failure) | Doc clarifies: imports must succeed; constructors may raise only when instantiated. | 0.2.2 |
-| 11 | LibriPhrase generation not pinned | LibriPhrase recipe pinned: LibriSpeech train-clean-100/360 + Montreal Forced Aligner alignments + minimum phrase duration 0.5 s + keyword vocab capped to 1500 unique phrases. | 1.1.2 |
+| 11 | LibriPhrase generation not pinned | LibriPhrase recipe pinned: LibriSpeech train-clean-100/360 + Montreal Forced Aligner alignments + minimum phrase duration 0.4 s + keyword vocab capped to 1500 unique phrases. | 1.1.2 |
 | 12 | VoxCeleb single point of failure | Documented fallback: VoxCeleb2 preferred; if access/terms fail, use a pinned Common Voice English release plus LibriSpeech, marked lower-confidence for speaker identity. | 1.1.4 |
 | 13 | Kaggle storage plan unrealistic | Strategy pinned: pre-process locally, pack as LMDB → upload as a single read-only Kaggle Dataset. Manifests reference the LMDB keys. | 1.1.3 |
 | 14 | `train_speaker.csv` at 1M rows too ambitious | Capped at ≈ 500K rows: 50 utterances/speaker × 10K speakers, sampled from VoxCeleb2 dev (or fallback). | 1.2.2 |
@@ -3604,7 +4956,7 @@ The 38 substantive issues identified in the v1 audit, mapped to the v2 fix and t
 | 21 | Orthogonality test ("loss = 0 when z_c, z_s orthogonal per-dim") fragile after centering | Replaced: loss → 0 when `z_c` and `z_s` are sampled independently from a centered distribution at large batch size (test uses B = 1024). | 2.3.2 |
 | 22 | Aux head class counts hardcoded | `n_words` and `n_speakers` loaded at runtime from `data/manifests/STATS.json`. Never hardcoded. | 2.2.3 |
 | 23 | Interleaved batching produced no positives for SupCon | New `ClassAwareBatchSampler`: each batch contains 8 classes × 16 samples = 128 (typical). Defined in `solospeak/data/samplers.py`. | 1.5, 3.3 |
-| 24 | ECAPA-TDNN dependency not pinned | Pinned to `speechbrain/spkrec-ecapa-voxceleb` at SpeechBrain 1.0.0 commit. Cached embeddings to `data/processed/speaker_embeddings.npy`. | 1.4.3 |
+| 24 | ECAPA-TDNN dependency not pinned | Pinned to `speechbrain/spkrec-ecapa-voxceleb`, `speechbrain==1.0.3`, and matching `torch==2.3.1` / `torchaudio==2.3.1`. Cached embeddings to `data/processed/speaker_embeddings.npy`. | 0.1.3, 1.4.3 |
 | 25 | FA/hr formula ambiguous (per-user vs per-device) | Both reported. Per-user FA/hr is the primary metric; device FA/hr = sum over enrolled users for N ∈ {1, 4, 8}. | 4.1.2 |
 | 26 | Q3 protocol (phonetic neighbors) unclear when real utterances unavailable | Pinned: g2p_en edit-distance ≤ 2 neighbors, prefer real utterances from LibriPhrase. If no real utterance for a neighbor, fall back to Parler-TTS synthesis (with disclosure). Two metrics reported: `q3_rejection_real` and `q3_rejection_synth`. | 4.1.2 |
 | 27 | Subgroup eval requires metadata that may not exist | Subgroups split into mandatory (`keyword_syllable_count`) and optional (gender/age/accent). Optional metrics reported on a best-effort basis with explicit "metadata coverage" disclosure. | 4.4 |
@@ -3615,10 +4967,58 @@ The 38 substantive issues identified in the v1 audit, mapped to the v2 fix and t
 | 32 | "BatchNorm fused into conv weights" not automatic in plain export | Explicit `fuse_model()` contract before export, with nested module paths owned by each block/stem. | 5.1 |
 | 33 | Model size FP32 ~18 MB / INT8 ~4.5 MB unverified | Recomputed: deployable params 1,100,897 → FP32 ≈ 4.4 MB weights + ≈ 0.5 MB graph ≈ 5 MB total. INT8 ≈ 1.2 MB weights + 0.5 MB graph ≈ 1.7 MB total. Reported numbers updated. | 5.2 |
 | 34 | xRT target inconsistency (0.2 vs 0.08) | HARD gate 0.20 (Samsung spec). STRETCH 0.08. Validation uses MIN/HARD gates only. | Appendix C, 4.5, 5.3 |
-| 35 | "Single source of truth" claim was false (referenced external doc) | All architecture content from the previously-external doc is now inlined. v2 IS the single source of truth. | front matter |
+| 35 | "Single source of truth" claim was false (referenced external doc) | All architecture content from the previously-external doc is now inlined. This reference IS the single source of truth. | front matter |
 | 36 | Production hardening was scope-creep for a hackathon | Phase 6 marked as mostly `🟡 STRETCH`. Each item delivers a single number, document, or stub — not a full implementation. | Phase 6 |
 | 37 | Phase dependencies too strict ("do not advance until gate passes") | MIN/TARGET split. Parallel tracks encouraged: build eval/deploy in parallel with training. | 3.0 |
 | 38 | Too many tests blocking advancement | Appendix D explicitly marks each test as advancement-blocker or informational. Several v1 blockers (subgroup eval, ablation matrix, full xRT) are now informational. | Appendix D |
+| 39 | Old repo could keep unsupported `matchboxnet` path alive | v2.1 explicitly supports only the `SoloSpeakResNet` family. MatchboxNet must be deleted or moved to a research branch, not kept in product config. | 0.2.3 |
+| 40 | `features_deploy.py` was specified only in prose | v2.1 includes the deployment log-mel implementation contract, including periodic Hann, reflect padding, HTK mel scale, log clamp, and time-axis crop/pad. | 1.3.1 |
+| 41 | `fuse_model()` was required for deployment but not defined in the backbone template | v2.1 adds `fuse_model()` methods to `NormalBlock`, `TransitionBlock`, and `SoloSpeakResNet`. | 2.1.2 |
+| 42 | Training-only aux/adversarial heads lacked an owner module | v2.1 defines `TrainingWrapper`, its forward outputs, and the rule that export loads only `wrapper.model` weights. | 3.1.3 |
+| 43 | `make eval` and long-running ablations were conflated | v2.1 separates `make eval` (≤ 1 hour KPI/probe/subgroup) from `make ablation` (days, report-critical when compute allows). | 4.3, 4.5 |
+| 44 | VoxCeleb fallback sounded secondary despite access risk | v2.1 makes the Common Voice + LibriSpeech fallback a first-class supported data path and forbids VoxCeleb-specific assumptions in training code. | 1.1.4 |
+| 45 | Phase-2 acceptance criteria were misnumbered as a 2.5 subsection after Silero-VAD | v2.2 renumbers the overall Phase-2 gate to `2.7 Acceptance criteria — Phase 2`, leaving Silero-VAD's local gate at 2.6.1. | 2.7 |
+| 46 | `DualHeadDataset` could emit OOV keyword labels for VoxCeleb/Common Voice transcripts | v2.2 defines `WORD_IGNORE_INDEX = -100`, requires speaker-manifest OOV keywords to use it, and routes aux/adversarial word CE only through valid wake-phrase labels. | 1.2.3, 1.5, 2.3.4, 3.3 |
+| 47 | SpeechBrain 1.0.0 with torch 2.3.1 and unconstrained torchaudio was brittle | v2.2 pins `speechbrain==1.0.3` and `torchaudio==2.3.1` next to `torch==2.3.1`; ECAPA notes forbid downgrading or leaving torchaudio unconstrained. | 0.1.3, 1.4.3 |
+| 48 | Smoke `train_gsc.csv` had no concrete shape or class contract | v2.2 requires 35 canonical GSC labels × 10 generated clips, a separate `gsc_vocab.json`, and `STATS.json["n_gsc_classes"] == 35`. | 1.2.3, 1.2.5, 3.2 |
+| 49 | SileroVAD class constants were missing `ClassVar` in the implementation template | v2.2 imports `ClassVar` and annotates `FRAME_SAMPLES` / `SAMPLE_RATE` as class variables so mypy strict mode matches Appendix B. | 2.6, Appendix B |
+| 50 | `EvalSet` dataclass default style differed from the rest of the config appendix | v2.2 uses stdlib `field(default_factory=...)` for the two default `Path` values, mirroring the surrounding default-factory pattern without relying on Pydantic. | Appendix C |
+| 51 | LibriPhrase rows had `start_s` / `end_s`, but the canonical manifest schema did not | v2.3 adds `start_s` and `end_s` to every manifest row and requires loaders to crop raw utterance segments before padding. | 1.1.2, 1.2.1 |
+| 52 | `test_kpi.csv` and Stage-5 quadrant rows did not identify the enrolled profile separately from the trial utterance | v2.3 adds `profile_id`, `enrolled_user_id`, `enrolled_keyword_text`, `profile_path`, and `trial_source` columns; `speaker_id` / `keyword_text` now always describe the trial audio. | 1.2.1, 1.5.1, 3.6.1 |
+| 53 | LMDB packing was operationally required but had no implementation owner | v2.3 adds `scripts/pack_audio_lmdb.py`, a Makefile target, idempotency rules, manifest rewriting rules, and profile-file storage contracts. | 0.1.2, 0.1.3, 1.2.6, Appendix A |
+| 54 | Stage 2-4 TA gates referenced task accuracy before the fusion MLP existed | v2.3 defines a fixed pre-fusion proxy protocol using `min(s_c, s_s)` and per-profile `tau_proxy` calibration. | 3.1.6, 3.3, 3.4, 3.5, Appendix B |
+| 55 | Combined loss and stage base APIs assumed one flat batch, conflicting with interleaved content/speaker streams | v2.3 adds `StageBatch` and updates `compute_loss()` / `CombinedLoss.forward()` to receive logical streams such as `content` and `speaker`. | 0.2.2, 2.3.4, 3.1.1, Appendix B |
+| 56 | Stage 6 said to use Stage-4 aux/adversarial loss while preparing a clean deployable model | v2.3 makes Stage 6 a clean-model QAT distillation stage with optional fusion BCE, explicitly excluding aux/adversarial heads. | 2.3.4, 3.7 |
+| 57 | Stage-6 degradation gate could be accidentally disabled by omitting the FP32 ONNX path | v2.3 requires temporary FP32 and INT8 ONNX paths during Stage-6 validation and updates Appendix B wording. | 3.7, 5.3, Appendix B |
+| 58 | Bootstrap templates had copy-paste failures | v2.3 fixes `requirements-dev.txt` syntax and Dockerfile inputs so `CMD ["make", "test"]` has `make`, `Makefile`, tests, README, and LICENSE available. | 0.1.3 |
+| 59 | Old-code migration risks were scattered across the document | v2.3 adds a migration preflight checklist for stale MatchboxNet files, old config defaults, old eval hard gates, and old single-threshold training APIs. | front matter |
+| 60 | Final reading order told the agent to start at `scripts/run_stage.py`, before foundational contracts existed | v2.3 changes the reading order to implement Phase 0 contracts first, then data, models, and training. | End of Reference Document |
+| 61 | `pyproject.toml` template could fail editable installs in a flat repo | v2.4 adds `[tool.setuptools.packages.find]` with `solospeak*` and `scripts*` discovery. | 0.1.3 |
+| 62 | LibriPhrase speaker-count targets contradicted the clean-only source corpus | v2.4 includes `train-other-500` in the default LibriPhrase recipe and download list, and lowers the expectation to ~2,300 training speakers. | 1.1.2, 1.1.3 |
+| 63 | Parler-TTS pin was stale and Parler was treated like arbitrary user voice cloning | v2.4 pins `parler-tts==0.2.3` and adds a Q3 TTS policy separating real right-voice Q3, speaker-verified synthetic Q3, and generic TTS stress rows. | 0.1.3, 3.6.1, 4.1.2 |
+| 64 | Silero VAD wrapper assumed an unpinned `h`/`c` ONNX signature | v2.4 requires recording the exact ONNX asset/hash/input names and updates the wrapper contract to the official `input`/`state`/`sr` state+context signature. | 2.6, Appendix B |
+| 65 | Stage-5 fusion training could leak profile-specific augmented rows into the dev gate | v2.4 adds profile-level `stage5_train`, `stage5_calibration`, and `stage5_dev` quadrant splits. | 3.6.1 |
+| 66 | Stage-5 needed template/calibration math before the files were scheduled to exist | v2.4 moves `enrollment/templates.py` and `enrollment/calibration.py` into Level 4 ownership. | Appendix A |
+| 67 | ONNX quantization calibration accepted a single array despite a three-input exported graph | v2.4 requires calibration readers to yield full `mel` / `content_template` / `speaker_template` dictionaries. | 5.2.1, Appendix B |
+| 68 | Migration preflight was advisory, so old-code repos could still start from stale APIs | Migration preflight is now a Phase-0 acceptance gate for old-code repos. | front matter, 0.1.5 |
+| 69 | MUSAN category usage contradicted itself (`noise` only vs speech/music/noise eval) | MUSAN usage is now split by task: `noise` for training augmentation, all categories for FA/noisy eval, with explicit bucket resolution. | 1.1.1, 1.1.3 |
+| 70 | LibriPhrase expected count could mean rows or unique `(phrase, speaker)` pairs | Expected output now means manifest rows / utterance segments, and STATS must report `row_count` separately from `unique_phrase_speaker_pairs`. | 1.1.2, 1.2.5 |
+| 71 | Stage-5 calibration split could be misused for profile-specific dev thresholds | Stage-5 calibration is limited to early stopping/global fallback checks; per-profile `tau` is computed only at profile creation. | 3.6.1, 3.6.2 |
+| 72 | Q3 generic TTS stress rows could be mixed into the hard right-voice gate | Q3 hard gate now includes only real right-voice rows and speaker-verified synthetic rows; descriptive Parler rows are stress-only. | 3.6.1, 4.1.2 |
+| 73 | ORT quantization said "do not quantize fusion MLP" without a stable implementation rule | Default ORT quantization now quantizes Conv nodes only; any future Linear quantization must use stable node prefixes and explicit `nodes_to_exclude`. | 5.2.1 |
+| 74 | Eval/deploy config models lacked a typed YAML loading contract | Appendix C now defines `_YamlConfig` and `load_eval_config_bundle()` so scripts do not parse raw dictionaries. | Appendix C |
+| 75 | Appendix C could be pasted into `config.py` with a mid-file `from __future__` import | Appendix C now omits the future import and tells agents to merge imports into the top import block. | Appendix C |
+| 76 | Strict mypy was required while public contracts still used bare `dict` | Shared aliases now cover dataset items, collated batches, probe outputs, xRT results, and ablation results; Appendix B uses those aliases. | 0.2.2, 1.5.3, Appendix B |
+| 77 | Smoke manifest prose said "tiny" but the example mixed smoke and full row counts | Smoke `STATS` now has a separate tiny seven-manifest example, with full-path counts explicitly kept separate. | 1.2.5 |
+| 78 | CI ran integration smoke tests without first generating smoke data | The CI template now runs the minimal downloader and smoke manifest generator before integration smoke tests. | 0.1.3 |
+| 79 | Q3 hard-gate eligibility depended on an unspecified sidecar | The canonical manifest now carries `q3_gate_eligible`, `synthesis_backend`, and `speaker_verification_score`; Q3 denominator minimums are explicit. | 1.2.1, 3.6.1 |
+| 80 | Stage-5 dev accuracy did not say which threshold to use | Stage 5 now uses a single `tau_stage5` chosen on calibration by macro quadrant accuracy and applied unchanged to dev. | 3.6.1 |
+| 81 | Final INT8-vs-FP32 degradation was described as optional despite being a release gate | Gate 10 is now required for final Phase-5 release validation and optional only for quick/debug validation. | 5.3, Appendix B, Appendix D |
+| 82 | CSV boolean strings could be parsed with `bool("false") == True` | Added `parse_bool_csv()` and required explicit manifest boolean parsing for `q3_gate_eligible`. | 1.2.1, 1.5.3, Appendix B |
+| 83 | Stage-5 threshold calibration could be biased by too few eligible Q3 rows | Added a full-path calibration denominator rule before selecting `tau_stage5`. | 3.6.1 |
+| 84 | Phase-4 Q3 aggregation could ignore the manifest eligibility column | KPI aggregation now uses `q3_gate_eligible` as the source of truth instead of recomputing verification. | 4.1.2 |
+| 85 | Validation gates loaded from YAML could be ignored by `validate()` | `validate()` now accepts a `ValidationGates` object instead of constructing defaults internally. | 5.3, Appendix B |
+| 86 | Missing subgroup results were specified as `null` but `SubgroupDict` did not allow `None` | `SubgroupDict` now allows unavailable subgroup entries to be `None`. | 0.2.2, 4.4 |
 
 ---
 
@@ -3634,4 +5034,6 @@ The 38 substantive issues identified in the v1 audit, mapped to the v2 fix and t
 2. **For Phase 2 specifically:** treat Section 2.1 as the contract. Do NOT attempt to match the BC-ResNet paper's architecture or parameter counts — they refer to a different design. The variants here (`bcresnet1/5/8/10/16`) are SoloSpeak-specific names for a SoloSpeak-specific architecture defined in 2.1.2. The parameter counts in 2.1.6 are computed analytically from the block formulas in 2.1.2; if your implementation matches the formulas, you will hit the counts within ±2%.
 3. **If your implementation's param count is more than ±2% off,** the bug is in your implementation, NOT in the test or the spec. Common causes: (a) using `bias=True` on Conv2d (the spec says `bias=False`), (b) miscounting BatchNorm parameters (each BN contributes `2 × channels`), (c) wrong channel progression (must be `[base, 2*base, 3*base, 4*base]`).
 4. **Do not modify tests** unless you can prove this document contradicts itself. If you find a contradiction, document it in the PR description and ask before changing.
-5. **Begin implementation at `scripts/run_stage.py` skeleton, then work backward through Phase 0.**
+5. **Begin implementation with Phase 0 contracts:** config/types/importable stubs first,
+   then data manifests/loaders, then models, then training orchestration. Do not start at
+   `scripts/run_stage.py` until the foundational contracts it imports already exist.
