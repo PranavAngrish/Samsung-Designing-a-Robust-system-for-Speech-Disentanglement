@@ -1,0 +1,50 @@
+eval_name: samsung-kpi-full
+
+kpi:
+  # TA Clean
+  ta_clean_min: 0.99
+  ta_clean_n_pairs: 500
+  ta_clean_utterances_per_pair: 10
+
+  # TA Noisy
+  ta_noisy_min_macro: 0.90
+  ta_noisy_min_worst_case: 0.80   # -5 dB crowd babble
+  snr_points: [-5, 0, 5, 10, 15, 20, 25, 30]
+  noise_types: [babble, traffic, music]
+
+  # FA rate
+  fa_per_hour_max: 1.0
+  fa_eval_hours: 10.0
+
+  # Quadrant rejection
+  q2_fa_max: 0.05    # imposter says correct word
+  q3_fa_max: 0.10    # user says phonetically similar word
+
+  # Distance
+  distance_ta_min: 0.85   # at 5m, stretch goal
+  distance_buckets_m: [0.5, 1.0, 2.0, 3.0, 5.0]
+
+  # Model constraints
+  param_count_max: 3_000_000
+  xrt_fp32_max: 0.2
+  xrt_int8_max: 0.08
+
+  # Variance
+  seeds: [42, 1337, 2024]
+
+ablations:
+  configs:
+    - name: full
+      description: "Full model — reference"
+    - name: no_ortho
+      override: {losses: {orthogonality: 0.0}}
+    - name: no_adv
+      override: {losses: {adversarial: 0.0}}
+    - name: no_disent
+      override: {losses: {orthogonality: 0.0, adversarial: 0.0}}
+    - name: no_tts_enroll
+      override: {enrollment: {tts_n_variants: 0}}
+    - name: no_gated_fusion
+      override: {fusion: {mode: "min"}}
+    - name: no_curriculum
+      override: {data: {curriculum: false}}

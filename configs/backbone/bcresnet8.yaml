@@ -1,0 +1,4 @@
+backbone:
+  variant: bcresnet8
+  scale: 1.0
+# Target: ~1.0M params, flagship phone deployment, xRT < 0.08 on ARM

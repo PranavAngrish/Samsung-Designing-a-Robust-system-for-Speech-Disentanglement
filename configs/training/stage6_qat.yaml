@@ -1,0 +1,18 @@
+run_name: solospeak-stage6-qat
+
+training:
+  stage: 6
+  batch_size: 128
+  num_epochs: 2
+  optimizer: adamw
+  lr: 5.0e-5
+  weight_decay: 1.0e-4
+  warmup_steps: 50
+  max_grad_norm: 5.0
+  precision: fp32   # QAT uses its own fake-quant — disable AMP
+  seed: 42
+  num_workers: 4
+  resume_from: checkpoints/stage5_fusion.pt
+  checkpoint_dir: checkpoints
+
+# GO/NO-GO gate: INT8 vs FP32 TA degradation < 0.3 percentage points

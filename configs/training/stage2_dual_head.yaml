@@ -1,0 +1,25 @@
+run_name: solospeak-stage2-dual-head
+
+training:
+  stage: 2
+  batch_size: 128
+  num_epochs: 30
+  optimizer: adamw
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  warmup_steps: 500
+  max_grad_norm: 5.0
+  precision: amp_bf16
+  seed: 42
+  num_workers: 4
+  resume_from: checkpoints/stage1_backbone.pt
+  checkpoint_dir: checkpoints
+
+losses:
+  supcon_content: 1.0
+  supcon_speaker: 1.0
+  orthogonality: 0.0   # not yet active
+  adversarial: 0.0     # not yet active
+  ce_aux: 0.5
+
+# GO/NO-GO gate: dev clean TA >= 96%

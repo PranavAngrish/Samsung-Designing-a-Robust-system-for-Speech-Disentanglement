@@ -1,0 +1,20 @@
+run_name: solospeak-stage5-fusion
+
+training:
+  stage: 5
+  batch_size: 256
+  num_epochs: 20
+  optimizer: adamw
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  warmup_steps: 200
+  max_grad_norm: 5.0
+  precision: fp32   # fusion MLP is tiny, fp32 is fine
+  seed: 42
+  num_workers: 2
+  resume_from: checkpoints/stage4_robust.pt
+  checkpoint_dir: checkpoints
+
+# Backbone + heads are FROZEN in this stage.
+# Only the GatedFusionMLP is trained.
+# GO/NO-GO gate: ALL Samsung KPIs met on dev set

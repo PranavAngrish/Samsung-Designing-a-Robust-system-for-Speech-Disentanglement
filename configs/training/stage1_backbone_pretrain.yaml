@@ -1,0 +1,22 @@
+run_name: solospeak-stage1-backbone-pretrain
+
+training:
+  stage: 1
+  batch_size: 256
+  num_epochs: 40
+  optimizer: adamw
+  lr: 3.0e-3
+  weight_decay: 1.0e-4
+  warmup_steps: 1000
+  max_grad_norm: 1.0
+  precision: amp_bf16
+  seed: 42
+  num_workers: 4
+  checkpoint_dir: checkpoints
+
+# GO/NO-GO gate: GSC-v2 dev accuracy >= 96%
+# Expected curves:
+#   epoch 3:  >= 80% train acc
+#   epoch 10: >= 92% dev acc
+#   epoch 20: >= 95% dev acc
+#   epoch 40: >= 96% dev acc

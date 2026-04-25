@@ -1,0 +1,56 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Data (large, not committed)
+data/raw/
+data/processed/
+# manifests ARE committed — see data/manifests/
+
+# Model checkpoints and artifacts
+checkpoints/
+artifacts/
+*.pt
+*.pth
+*.onnx
+*.bin
+
+# Weights & Biases
+wandb/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+
+# Reports (generated — not committed, reproduced by make eval)
+reports/
+
+# Secrets
+.env
+*.key
+
+# Pre-commit cache
+.pre-commit-cache/

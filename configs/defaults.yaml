@@ -1,0 +1,58 @@
+run_name: solospeak-default
+
+audio:
+  sample_rate: 16000
+  n_fft: 400
+  hop_length: 160
+  win_length: 400
+  n_mels: 80
+  fmin: 20.0
+  fmax: 7600.0
+  window_duration_s: 1.5
+
+backbone:
+  variant: bcresnet8
+  scale: 1.0
+
+heads:
+  content_dim: 128
+  speaker_dim: 128
+  hidden_dim: 256
+  dropout: 0.1
+
+fusion:
+  feature_names: [s_c, s_s, s_c_times_s_s, abs_diff, s_c_sq, s_s_sq]
+  hidden_dims: [20, 10]
+  tau_on: 0.65
+  tau_off: 0.45
+
+losses:
+  supcon_content: 1.0
+  supcon_speaker: 1.0
+  orthogonality: 0.1
+  adversarial: 0.1
+  ce_aux: 0.5
+  adversarial_ramp_steps: 5000
+
+training:
+  stage: 1
+  batch_size: 128
+  num_epochs: 30
+  optimizer: adamw
+  lr: 3.0e-3
+  weight_decay: 1.0e-4
+  warmup_steps: 1000
+  max_grad_norm: 5.0
+  precision: amp_bf16
+  seed: 42
+  num_workers: 4
+  resume_from: null
+  checkpoint_dir: checkpoints
+
+data:
+  root: data/processed
+  manifests_dir: data/manifests
+  snr_range_db: [-5, 30]
+  distance_range_m: [0.5, 5.0]
+  augmentation_prob: 0.8
+  hard_neg_fraction: 0.3
