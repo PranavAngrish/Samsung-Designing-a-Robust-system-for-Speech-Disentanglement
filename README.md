@@ -1,78 +1,145 @@
 # SoloSpeak
 
-Speaker-personalized custom wake-word detection. Samsung ennovateX AX Hackathon 2026, Problem #04.
+Speaker-personalized custom wake-word detection for Samsung ennovateX AX Hackathon
+2026, Problem #04.
 
-SoloSpeak is a sub-3M-parameter on-device keyword spotter that only wakes for *your* voice saying *your* custom word — robust from −5 dB to 30 dB SNR, from 0.5 m to 5 m, trained end-to-end on open data, released under Apache-2.0.
+SoloSpeak is an on-device keyword spotter that wakes only when the enrolled user says
+the enrolled phrase. It separates **what was said** from **who said it**, then fuses both
+scores in a compact deployment graph.
 
-## Status
+## Current Status
 
-**Phase 0 — Foundation.** Repo scaffold, CI, and skeleton stubs in place. Training not yet started.
+The repository is complete through Phase 7 at the smoke-validation level: data smoke
+pipeline, six training stages, KPI evaluation, ablation table generation, ONNX INT8
+export, validation gates, OTA packaging, production-hardening docs, and submission
+helpers are wired and tested.
 
-| KPI | Target | Status |
-|-----|--------|--------|
-| True Acceptance (Clean) | ≥ 99% | — |
-| True Acceptance (Noisy) | ≥ 90% | — |
-| False Acceptance | < 1/hr | — |
-| Parameters | < 3 M | — |
-| xRT (INT8, ARM) | < 0.2 | — |
+Important caveat: the numbers below are from the current smoke run. Replace them with a
+full-data training/evaluation run before making final leaderboard or submission claims.
+
+## KPI Snapshot
+
+| Metric | Current Smoke Value | Hard Gate |
+|---|---:|---:|
+| TA clean | 100.0% | >= 92.0% |
+| TA noisy macro | 100.0% | >= 80.0% |
+| FA per hour per user | 0.00 | <= 2.00 |
+| Q2 imposter rejection | 100.0% | reported |
+| Q3 wrong-word rejection | 100.0% | reported |
+| Q4 background rejection | 100.0% | reported |
+| Parameters | 1.10M | <= 3.00M |
+| INT8 artifact size | 1.47 MB | <= 5.00 MB |
+| xRT local p95 | 0.0032 | <= 0.20 |
+| INT8 vs FP32 degradation | 0.0 pp | <= 1.0 pp |
+
+Generated reports live in `reports/` after running `make eval`, `make ablation`, and
+`make export`.
+
+## Links
+
+- Repository: https://github.com/pranavangrish/solospeak
+- Demo video: `PASTE_UNLISTED_YOUTUBE_URL_HERE`
+- Release artifacts: https://github.com/pranavangrish/solospeak/releases/tag/v1.0.0-phase2
+- Architecture: [docs/architecture.md](docs/architecture.md)
+- Reproducibility: [docs/reproducibility.md](docs/reproducibility.md)
+- Deployment guide: [docs/deployment_guide.md](docs/deployment_guide.md)
+- Final report outline: [docs/final_report_outline.md](docs/final_report_outline.md)
+- Submission email: [docs/submission_email.md](docs/submission_email.md)
 
 ## Architecture
 
-A single shared BC-ResNet-8 encoder with two orthogonal output heads — a **content head** (what was said) and a **speaker head** (who said it) — trained jointly with a disentanglement objective (adversarial gradient reversal + orthogonality penalty). At inference, a learned gating fusion combines the two cosine similarities into a single accept/reject decision.
+SoloSpeak uses a shared residual CNN backbone with two orthogonal 128-dim heads:
 
-See [docs/architecture.md](docs/architecture.md) for the full design.
+- Content head: phrase identity, or "what was said".
+- Speaker head: enrolled user identity, or "who said it".
+
+At inference, the deployable ONNX graph receives `mel`, `content_template`, and
+`speaker_template`, returns both embeddings, computes safe cosine scores, and emits a
+fusion probability. The streaming demo applies hysteresis so a wake event fires once per
+decisive window.
 
 ## Quick Start
 
 ```bash
-git clone https://github.com/pranavangrish/solospeak.git
-cd solospeak
 make install-dev
+make download-data-smoke
+make prepare-manifests-smoke
+python -m scripts.run_stage --all
+make eval
+make ablation
+make export
 make test
 ```
 
-## Training
+## Full Data Run
 
 ```bash
-# Download datasets (requires VoxCeleb academic access — see data/README.md)
 make download-data
 make prepare-manifests
-
-# Run training stages sequentially
-make stage-1   # backbone pretrain on GSC-v2, ~3 days
-make stage-2   # dual-head joint training, ~5 days
-make stage-3   # disentanglement, ~2 days
-make stage-4   # noise robustness, ~3 days
-make stage-5   # fusion MLP, ~1 day
-make stage-6   # quantization-aware fine-tune, ~1 day
+python -m scripts.run_stage --all
+make eval
+make ablation
+make export
 ```
 
-## Evaluation
-
-```bash
-make eval          # full KPI suite → reports/kpi_final.json
-make ablation      # 7-config ablation study → reports/ablation_table.md
-```
+Full data is required for final accuracy claims. Generated raw data, checkpoints, reports,
+and ONNX artifacts are intentionally gitignored and should be attached to the GitHub
+Release rather than committed.
 
 ## Deployment
 
 ```bash
-make export        # PyTorch → ONNX FP32 → ONNX INT8, runs 9 validation gates
+make export
 ```
+
+This produces:
+
+- `artifacts/solospeak_fp32.onnx`
+- `artifacts/solospeak_int8.onnx`
+- `artifacts/solospeak_int8_previous.onnx`
+- `artifacts/ValidationReport.json`
+- `artifacts/solospeak_ota_v1.0.0.zip`
+
+The smoke workflow creates a valid placeholder `silero_vad_v4.onnx`. Replace it with the
+real pinned Silero VAD artifact before recording the live demo.
+
+## Demo
+
+Smoke enrollment:
+
+```bash
+python demo/cli/live_demo.py --enroll --user pranav --keyword "hey prism"
+```
+
+Real microphone enrollment:
+
+```bash
+python demo/cli/live_demo.py --enroll --user pranav --keyword "hey prism" --mic
+```
+
+Rollback slot boot check:
+
+```bash
+python demo/cli/live_demo.py --model-slot previous --eval
+```
+
+## Submission Helpers
+
+```bash
+make submission-package
+```
+
+This regenerates:
+
+- [docs/demo_video_script.md](docs/demo_video_script.md)
+- [docs/final_report_outline.md](docs/final_report_outline.md)
+- [docs/release_manifest.md](docs/release_manifest.md)
+- [docs/submission_email.md](docs/submission_email.md)
 
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
 
-All training datasets are CC-BY 4.0 or CC0 compatible with Apache-2.0 distribution. See [data/README.md](data/README.md) for per-dataset license details.
-
 ## Citation
 
-```bibtex
-@software{solospeak2026,
-  author = {Pranav Angrish},
-  title  = {SoloSpeak: Speaker-Personalized Custom Wake-Word Detection},
-  year   = {2026},
-  url    = {https://github.com/pranavangrish/solospeak},
-}
-```
+See [CITATION.cff](CITATION.cff).

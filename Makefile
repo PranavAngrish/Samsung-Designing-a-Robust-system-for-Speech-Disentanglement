@@ -1,4 +1,4 @@
-.PHONY: install install-dev install-optional test test-unit test-integration test-slow test-all test-optional lint typecheck docs-check format download-data download-data-smoke prepare-manifests prepare-manifests-smoke pack-lmdb precompute-speaker-embeds eval ablation export clean
+.PHONY: install install-dev install-optional test test-unit test-integration test-slow test-all test-optional lint typecheck docs-check format download-data download-data-smoke prepare-manifests prepare-manifests-smoke pack-lmdb precompute-speaker-embeds eval ablation export submission-package clean
 
 PYTEST_OPTS ?= -p no:capture
 
@@ -69,6 +69,9 @@ ablation:
 
 export:
 	python -m scripts.export_and_validate --checkpoint checkpoints/latest.pt
+
+submission-package:
+	python -m scripts.prepare_submission
 
 clean:
 	find . -type d -name __pycache__ -exec rm -rf {} +

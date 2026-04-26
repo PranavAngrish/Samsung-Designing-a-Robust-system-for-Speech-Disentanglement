@@ -5,8 +5,8 @@ authors:
     given-names: Pranav
     email: pranavangrishmusic@gmail.com
 title: "SoloSpeak: Speaker-Personalized Custom Wake-Word Detection"
-version: 0.1.0
-date-released: 2026-04-24
+version: 1.0.0-phase2
+date-released: 2026-04-26
 url: "https://github.com/pranavangrish/solospeak"
 license: Apache-2.0
 keywords:
