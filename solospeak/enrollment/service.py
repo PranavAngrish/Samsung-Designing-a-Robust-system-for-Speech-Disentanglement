@@ -13,13 +13,13 @@ from __future__ import annotations
 
 import numpy as np
 
-from solospeak.utils.types import UserProfile
+from solospeak.utils.types import FloatArray, UserProfile
 
 
 def enroll(
     user_id: str,
     keyword_text: str,
-    recordings: list[np.ndarray],
+    recordings: list[FloatArray],
     encoder: object,
     tts_n_variants: int = 10,
     sr: int = 16000,
@@ -33,7 +33,7 @@ def enroll(
     raise NotImplementedError("Implement in Phase 5")
 
 
-def compute_mean_template(embeddings: list[np.ndarray]) -> np.ndarray:
+def compute_mean_template(embeddings: list[FloatArray]) -> FloatArray:
     """Average embeddings and L2-normalize the result."""
     stack = np.stack(embeddings, axis=0)         # (N, 128)
     mean = stack.mean(axis=0)                     # (128,)

@@ -1,0 +1,2 @@
+file_path,duration_s,speaker_id,keyword_text,split,source_dataset,quadrant_class
+data/processed/smoke/audio/gsc_yes.wav,0.400,gsc_spk_a,yes,train,smoke_gsc,

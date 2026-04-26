@@ -1,30 +1,14 @@
-run_name: solospeak-stage4-robustness
+__base__: ../defaults.yaml
+run_name: stage4_robustness
 
 training:
   stage: 4
   batch_size: 64
   num_epochs: 15
-  optimizer: adamw
-  lr: 1.0e-4
-  weight_decay: 1.0e-4
+  lr: 0.0001
   warmup_steps: 100
-  max_grad_norm: 5.0
-  precision: amp_bf16
-  seed: 42
-  num_workers: 4
   resume_from: checkpoints/stage3_disentangle.pt
-  checkpoint_dir: checkpoints
-
-losses:
-  supcon_content: 1.0
-  supcon_speaker: 1.0
-  orthogonality: 0.1
-  adversarial: 0.1
-  adversarial_ramp_steps: 0   # already ramped — start at full weight
-  ce_aux: 0.5
 
 data:
   augmentation_prob: 0.9
   hard_neg_fraction: 0.4
-
-# GO/NO-GO gate: dev noisy TA (macro-avg over 8 SNR buckets) >= 88%

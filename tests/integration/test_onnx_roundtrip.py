@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 
 @pytest.mark.slow
 @pytest.mark.onnx
-def test_onnx_export_and_run(tmp_path: "pathlib.Path") -> None:
+def test_onnx_export_and_run(tmp_path: Path) -> None:
     pytest.skip("Requires Phase 2 BC-ResNet implementation")

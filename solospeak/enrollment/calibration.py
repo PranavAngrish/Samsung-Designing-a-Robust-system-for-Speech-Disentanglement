@@ -7,7 +7,7 @@ sits at an unusual location in the embedding space.
 
 from __future__ import annotations
 
-import numpy as np
+from solospeak.utils.types import FloatArray
 
 
 def calibrate_threshold(
@@ -23,9 +23,9 @@ def calibrate_threshold(
 
 
 def estimate_rejection_score(
-    rejection_audio: np.ndarray,
-    content_template: np.ndarray,
-    speaker_template: np.ndarray,
+    rejection_audio: FloatArray,
+    content_template: FloatArray,
+    speaker_template: FloatArray,
     encoder: object,
     fusion: object,
     sr: int = 16000,

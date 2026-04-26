@@ -1,0 +1,2 @@
+# Install the package with all dev dependencies (pins come from pyproject.toml).
+-e .[dev]

@@ -50,21 +50,20 @@ class EmbeddingHead(nn.Module):
 
 
 class AuxiliaryHeads(nn.Module):
-    """Training-only auxiliary classification heads. Stripped at ONNX export.
-
-    - aux_word_head:    z_c → word class logits (cross-entropy signal)
-    - aux_speaker_head: z_s → speaker ID logits (cross-entropy signal)
-    """
+    """Training-only auxiliary classification heads. Stripped at ONNX export."""
 
     def __init__(
         self, embed_dim: int = 128, n_words: int = 1000, n_speakers: int = 7000
     ) -> None:
         super().__init__()
-        self.word_head = nn.Linear(embed_dim, n_words)
-        self.speaker_head = nn.Linear(embed_dim, n_speakers)
+        self.aux_word = nn.Linear(embed_dim, n_words)
+        self.aux_speaker = nn.Linear(embed_dim, n_speakers)
+
+    def forward(self, z_c: torch.Tensor, z_s: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        return cast(torch.Tensor, self.aux_word(z_c)), cast(torch.Tensor, self.aux_speaker(z_s))
 
     def forward_word(self, z_c: torch.Tensor) -> torch.Tensor:
-        return cast(torch.Tensor, self.word_head(z_c))
+        return cast(torch.Tensor, self.aux_word(z_c))
 
     def forward_speaker(self, z_s: torch.Tensor) -> torch.Tensor:
-        return cast(torch.Tensor, self.speaker_head(z_s))
+        return cast(torch.Tensor, self.aux_speaker(z_s))

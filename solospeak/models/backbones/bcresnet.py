@@ -48,7 +48,7 @@ class TransitionBlock(nn.Module):
         raise NotImplementedError("Implement in Phase 2")
 
 
-class BCResNet(nn.Module):
+class SoloSpeakResNet(nn.Module):
     """Broadcasted Residual Network for keyword spotting.
 
     📋 CONTRACT
@@ -71,3 +71,6 @@ class BCResNet(nn.Module):
     def output_channels(self) -> int:
         """Return the number of output channels for this variant."""
         raise NotImplementedError("Implement in Phase 2")
+
+
+BCResNet = SoloSpeakResNet

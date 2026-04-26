@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
-import pytest
 
 from solospeak.enrollment.service import compute_mean_template
 from solospeak.enrollment.calibration import calibrate_threshold
@@ -29,7 +30,7 @@ def test_calibrate_threshold_between_rejection_and_confidence() -> None:
     assert 0.3 < tau < 0.9
 
 
-def test_save_load_profile_roundtrip(tmp_path: "pathlib.Path") -> None:
+def test_save_load_profile_roundtrip(tmp_path: Path) -> None:
     c = np.random.randn(128).astype(np.float32)
     s = np.random.randn(128).astype(np.float32)
     c /= np.linalg.norm(c)

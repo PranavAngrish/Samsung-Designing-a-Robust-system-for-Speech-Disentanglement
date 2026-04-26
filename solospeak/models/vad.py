@@ -6,8 +6,7 @@ Role: gate the expensive encoder. If no speech in last 500 ms, skip inference en
 
 from __future__ import annotations
 
-import numpy as np
-import torch
+from solospeak.utils.types import FloatArray
 
 
 class SileroVAD:
@@ -21,7 +20,7 @@ class SileroVAD:
     def __init__(self, threshold: float = 0.5, sr: int = 16000) -> None:
         raise NotImplementedError("Implement in Phase 1")
 
-    def is_speech(self, chunk: np.ndarray, sr: int = 16000) -> bool:
+    def is_speech(self, chunk: FloatArray, sr: int = 16000) -> bool:
         raise NotImplementedError("Implement in Phase 1")
 
     def reset_states(self) -> None:

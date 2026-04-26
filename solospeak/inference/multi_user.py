@@ -6,9 +6,7 @@ All per-user comparisons are cosine dot products (128-dim — essentially free).
 
 from __future__ import annotations
 
-import numpy as np
-
-from solospeak.utils.types import UserProfile, WakeEvent
+from solospeak.utils.types import FloatArray, UserProfile, WakeEvent
 
 
 class MultiUserDetector:
@@ -27,7 +25,7 @@ class MultiUserDetector:
     ) -> None:
         raise NotImplementedError("Implement in Phase 5")
 
-    def step(self, mel: np.ndarray) -> WakeEvent | None:
+    def step(self, mel: FloatArray) -> WakeEvent | None:
         raise NotImplementedError("Implement in Phase 5")
 
     def add_user(self, profile: UserProfile) -> None:

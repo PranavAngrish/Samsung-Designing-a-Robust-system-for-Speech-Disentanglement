@@ -7,9 +7,7 @@ import torch
 
 from solospeak.losses.supcon import SupConLoss
 from solospeak.losses.orthogonality import orthogonality_loss
-from solospeak.models.fusion import GatedFusionMLP
 from solospeak.training.schedulers import cosine_schedule_with_warmup, linear_ramp
-from solospeak.utils.config import FusionConfig, SoloSpeakConfig, TrainingConfig
 
 
 def test_supcon_backward_with_mixed_labels() -> None:

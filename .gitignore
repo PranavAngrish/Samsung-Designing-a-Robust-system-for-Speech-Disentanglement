@@ -17,8 +17,10 @@ env/
 ENV/
 
 # Data (large, not committed)
-data/raw/
-data/processed/
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
 # manifests ARE committed — see data/manifests/
 
 # Model checkpoints and artifacts

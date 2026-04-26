@@ -1,0 +1,4 @@
+__base__: ../defaults.yaml
+
+backbone:
+  variant: bcresnet10

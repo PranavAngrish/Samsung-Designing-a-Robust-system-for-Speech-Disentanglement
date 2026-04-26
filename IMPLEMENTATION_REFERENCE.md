@@ -2948,6 +2948,23 @@ those gates reproducible, they use a fixed proxy decision protocol:
    only for Stage 2–4 gates and mode-collapse guards; Stage 5 replaces the proxy with
    the learned `GatedFusionMLP`.
 
+**Noisy proxy protocol (`run_proxy_ta(noisy=True)`).**
+
+When `noisy=True`, apply on-the-fly noise augmentation to each dev trial waveform before
+computing embeddings. Noise is drawn from MUSAN `noise` files, which must already be
+downloaded before Stage 4 runs (same source as training augmentation). Use the `AddNoise`
+operator at a fixed SNR grid of `{0, 5, 10, 15, 20}` dB — NOT the curriculum scheduler
+and NOT the full 8-bucket KPI grid. For each trial, sample one random noise file and one
+random SNR uniformly from the five values above. Compute the proxy score at each SNR
+bucket independently and report the macro-mean over all SNR buckets as `dev/ta_noisy_avg`.
+Use the same per-profile `tau_proxy` calibrated from the clean pass for all noisy
+evaluations — do not re-calibrate per SNR bucket. This is a lightweight approximation;
+Stage 4's MIN gate tracks the trend, not exact alignment with the Phase 4 KPI suite.
+
+If MUSAN noise files are not yet downloaded when Stage 2 or Stage 3 calls
+`run_proxy_ta(noisy=False)`, that is acceptable — the noisy protocol is only invoked by
+Stage 4 and later stages.
+
 This protocol prevents an implementing agent from inventing a different temporary
 decision rule for each stage.
 
@@ -2958,6 +2975,34 @@ decision rule for each stage.
 **Data.** GSC v2, 35-class classification.
 **Loss.** Cross-entropy.
 **Architecture.** SoloSpeakResNet backbone + linear classifier (the classifier is discarded at end of stage; only the backbone weights are passed to Stage 2).
+
+`[DECISION]` **Stage 1 does NOT use `TrainingWrapper`.** `TrainingWrapper` requires
+`n_aux_word_classes` and `n_aux_speaker_classes`, which are `None` at Stage 1 and will
+raise `ValueError` immediately. Stage 1 uses a standalone `Stage1Wrapper` defined inside
+`solospeak/training/stages/stage1_backbone.py`:
+
+```python
+class Stage1Wrapper(nn.Module):
+    """Stage 1 only: backbone + GSC classifier. Not part of the deployed model."""
+    def __init__(self, config: SoloSpeakConfig) -> None:
+        super().__init__()
+        assert config.training.n_gsc_classes is not None, \
+            "n_gsc_classes must be injected from STATS.json before Stage 1"
+        self.backbone = SoloSpeakResNet(config.backbone.variant)
+        c_out = self.backbone.output_channels    # e.g. 96 for bcresnet8
+        # Backbone output: (B, c_out, 1, T/8). Pool both spatial dims to (B, c_out).
+        self.pool = nn.AdaptiveAvgPool2d((1, 1))
+        self.classifier = nn.Linear(c_out, config.training.n_gsc_classes)
+
+    def forward(self, mel: torch.Tensor) -> torch.Tensor:
+        feat = self.backbone(mel)          # (B, c_out, 1, 20)
+        x = self.pool(feat).flatten(1)    # (B, c_out)
+        return self.classifier(x)          # (B, n_gsc_classes) — raw logits
+```
+
+At the end of Stage 1, only `wrapper.backbone.state_dict()` is extracted and loaded into
+`SoloSpeakModel.backbone` to initialise Stage 2. The classifier weights are discarded.
+
 **Class count.** Load `TrainingConfig.n_gsc_classes` from
 `data/manifests/STATS.json["n_gsc_classes"]`; this must be 35 for both smoke and full
 GSC v2. Do not reuse `n_aux_word_classes` for the Stage-1 classifier.
@@ -4582,8 +4627,56 @@ class EnrollmentService:
 class StreamingInference:
     def __init__(self, onnx_path: Path) -> None: ...
     def step(self, audio_frame: np.ndarray) -> list[WakeEvent]: ...
+    # audio_frame: (2560,) float32 — exactly DeploymentConfig.streaming_hop_ms (160 ms)
+    #   × sample_rate (16 000 Hz) = 2 560 samples per call.
+    # The ring buffer advances by 2 560 samples per step.
+    # Silero-VAD is called on five consecutive 512-sample sub-frames extracted from the
+    # new audio; if any sub-frame is speech-active, the full 25 600-sample (1.6 s) ring
+    # buffer is forwarded to the wake-word ONNX model. WakeHysteresis is applied to the
+    # resulting fusion_score before emitting a WakeEvent.
     def enroll_user(self, profile: UserProfile) -> None: ...
     def remove_user(self, user_id: str) -> None: ...
+
+# solospeak/inference/hysteresis.py
+class WakeHysteresis:
+    """Two-threshold hysteresis with refractory suppression.
+
+    State machine:
+        IDLE        — fusion_score < tau_on  → stay IDLE
+                    — fusion_score >= tau_on → emit WakeEvent, enter REFRACTORY
+        REFRACTORY  — suppress all detections for `refractory_ms` milliseconds
+                    — after refractory period → IDLE if score < tau_off, else ACTIVE
+        ACTIVE      — fusion_score >= tau_off → stay ACTIVE (no new event)
+                    — fusion_score <  tau_off → enter IDLE
+    """
+    def __init__(self, tau_on: float = 0.65, tau_off: float = 0.45,
+                 refractory_ms: int = 250, hop_ms: int = 160) -> None: ...
+    def step(self, fusion_score: float, timestamp_ms: int,
+             user_id: str, keyword_text: str) -> "WakeEvent | None": ...
+    # Returns a WakeEvent when a new detection fires, else None.
+    def reset(self) -> None: ...
+    # Reset to IDLE state — call when switching audio streams or after re-enrollment.
+
+# solospeak/inference/multi_user.py
+class MultiUserInference:
+    """Single ONNX session evaluated against N enrolled profiles per audio window.
+
+    Computes (z_c, z_s) once per window, then evaluates fusion_score against every
+    enrolled UserProfile. Maintains one WakeHysteresis instance per enrolled user.
+    Per step, emits a WakeEvent for the profile with the highest fusion_score that
+    both exceeds its per-user tau and is not in a refractory period. In the event of
+    a tie, the profile with the higher fusion_score wins.
+
+    N = 1 produces identical behaviour to StreamingInference + WakeHysteresis.
+    """
+    def __init__(self, onnx_path: Path) -> None: ...
+    def add_user(self, profile: "UserProfile") -> None: ...
+    def remove_user(self, user_id: str) -> None: ...
+    def step(self, audio_frame: np.ndarray) -> list[WakeEvent]: ...
+    # audio_frame: (2560,) float32 — same contract as StreamingInference.step().
+    # Returns a list of zero or one WakeEvent per call (at most one fires per step).
+    def active_users(self) -> list[str]: ...
+    # Returns list of currently enrolled user_ids.
 ```
 
 
@@ -4604,12 +4697,18 @@ The main schema is defined in **0.2.3** (`SoloSpeakConfig` and its sub-models). 
 
 ```python
 # solospeak/utils/config.py — additions to the file from 0.2.3
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Literal, TypeVar
-
-import yaml
-from pydantic import BaseModel, Field
+#
+# ── MERGE INSTRUCTIONS ──────────────────────────────────────────────────────
+# DO NOT paste this block verbatim. The imports below are ALREADY present in
+# the 0.2.3 file: Path, Literal, yaml, BaseModel, Field.
+# Only these two lines are NEW — add them to the existing import block:
+#
+#   from dataclasses import dataclass, field          ← ADD this line
+#   from typing import Any, Literal, TypeVar          ← ADD TypeVar to existing
+#
+# Then append all class definitions below starting from ConfigT down to the
+# end of this appendix, after the existing `_load_yaml_with_base` function.
+# ────────────────────────────────────────────────────────────────────────────
 
 
 ConfigT = TypeVar("ConfigT", bound="_YamlConfig")
@@ -4953,7 +5052,7 @@ mapped to the section number where the fix lives.
 | 18 | GO/NO-GO gates too aggressive | Every gate split into `MIN:` (advancement) and `TARGET:` (aspiration). MIN gates lowered to ship-realistic values. | 3.0, all stage sections |
 | 19 | Stage 3 disentanglement metric (probe ≤ 20%) was N-classes-dependent | New metric: **relative probe-accuracy reduction vs Stage 2 baseline**. MIN 30% reduction, TARGET 60%. Probe protocol pinned: `Linear(128, 256) → ReLU → Linear(256, n)`, AdamW lr=1e-3, 10 epochs, balanced 50 utt/class, max 200 classes. | 3.4.1, 4.2 |
 | 20 | SupCon test ("loss = 0 when all embeddings identical and labels identical") was mathematically wrong | Replaced with: (a) loss is finite and non-negative for any input; (b) loss is monotonically lower when positive pairs are closer; (c) gradient sign on a known-direction perturbation matches expected. | 2.3.1 |
-| 21 | Orthogonality test ("loss = 0 when z_c, z_s orthogonal per-dim") fragile after centering | Replaced: loss → 0 when `z_c` and `z_s` are sampled independently from a centered distribution at large batch size (test uses B = 1024). | 2.3.2 |
+| 21 | Orthogonality test ("loss = 0 when z_c, z_s orthogonal per-dim") fragile after centering | Replaced with the test in §2.3.5: `orthogonality_loss` decreases monotonically over 100 gradient steps when `z_c` and `z_s` are trainable parameters initialised as correlated random vectors. This is the authoritative v2 test; an earlier draft of this changelog incorrectly described a different replacement test (B=1024 independent sampling) — that description was wrong and has been corrected here. | 2.3.5 |
 | 22 | Aux head class counts hardcoded | `n_words` and `n_speakers` loaded at runtime from `data/manifests/STATS.json`. Never hardcoded. | 2.2.3 |
 | 23 | Interleaved batching produced no positives for SupCon | New `ClassAwareBatchSampler`: each batch contains 8 classes × 16 samples = 128 (typical). Defined in `solospeak/data/samplers.py`. | 1.5, 3.3 |
 | 24 | ECAPA-TDNN dependency not pinned | Pinned to `speechbrain/spkrec-ecapa-voxceleb`, `speechbrain==1.0.3`, and matching `torch==2.3.1` / `torchaudio==2.3.1`. Cached embeddings to `data/processed/speaker_embeddings.npy`. | 0.1.3, 1.4.3 |

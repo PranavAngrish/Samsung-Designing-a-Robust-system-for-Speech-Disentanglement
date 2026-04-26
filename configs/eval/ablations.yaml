@@ -1,0 +1,13 @@
+ablations:
+  - full
+  - no_ortho
+  - no_adv
+  - no_disent
+  - no_tts_enroll
+  - no_gated_fusion
+  - no_curriculum
+seeds: [42]
+extra_seeds_for: [full, no_disent]
+extra_seeds: [137, 2718]
+base_checkpoint: checkpoints/stage2_dualhead.pt
+max_parallel: 1

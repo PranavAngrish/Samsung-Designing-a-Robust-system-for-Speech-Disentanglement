@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from solospeak.utils.types import FloatArray
+
 
 def phone_edit_distance(seq_a: list[str], seq_b: list[str]) -> int:
     """Levenshtein distance between two phoneme sequences."""
@@ -44,7 +46,7 @@ def phonetic_hard_negatives(keyword: str, vocab: list[str], k: int = 10) -> list
 
 def speaker_hard_negatives(
     anchor_speaker_id: str,
-    speaker_embeddings: np.ndarray,
+    speaker_embeddings: FloatArray,
     speaker_ids: list[str],
     k: int = 10,
 ) -> list[str]:

@@ -12,9 +12,10 @@ from __future__ import annotations
 
 import argparse
 import csv
-import os
+import json
 from pathlib import Path
 
+import numpy as np
 import soundfile as sf
 
 from solospeak.data.splits import assign_split
@@ -65,6 +66,62 @@ def _write_stats(counts: dict[str, int], output_dir: Path) -> None:
     for name, n in sorted(counts.items()):
         lines.append(f"- **{name}**: {n:,} rows\n")
     (output_dir / "STATS.md").write_text("".join(lines))
+
+
+def _smoke_wave(path: Path, frequency: float) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    sr = 16000
+    t = np.linspace(0.0, 0.4, int(sr * 0.4), endpoint=False, dtype=np.float32)
+    wav = (0.1 * np.sin(2 * np.pi * frequency * t)).astype(np.float32)
+    sf.write(str(path), wav, sr)
+
+
+def write_smoke_manifests(output_dir: Path) -> None:
+    """Create tiny deterministic manifests for Phase-0 CI smoke checks."""
+    audio_dir = Path("data/processed/smoke/audio")
+    clips = {
+        "spk_a_hello": audio_dir / "spk_a_hello.wav",
+        "spk_b_hello": audio_dir / "spk_b_hello.wav",
+        "spk_c_world": audio_dir / "spk_c_world.wav",
+        "gsc_yes": audio_dir / "gsc_yes.wav",
+    }
+    for i, path in enumerate(clips.values(), start=1):
+        _smoke_wave(path, 220.0 + 55.0 * i)
+
+    def row(path: Path, speaker: str, keyword: str, split: str, dataset: str) -> dict[str, str]:
+        return {
+            "file_path": str(path),
+            "duration_s": "0.400",
+            "speaker_id": speaker,
+            "keyword_text": keyword,
+            "split": split,
+            "source_dataset": dataset,
+            "quadrant_class": "",
+        }
+
+    rows = {
+        "train_content.csv": [row(clips["spk_a_hello"], "spk_a", "hello", "train", "smoke")],
+        "dev_content.csv": [row(clips["spk_b_hello"], "spk_b", "hello", "dev", "smoke")],
+        "train_speaker.csv": [row(clips["spk_a_hello"], "spk_a", "", "train", "smoke")],
+        "dev_speaker.csv": [row(clips["spk_b_hello"], "spk_b", "", "dev", "smoke")],
+        "train_gsc.csv": [row(clips["gsc_yes"], "gsc_spk_a", "yes", "train", "smoke_gsc")],
+        "dev_gsc.csv": [row(clips["gsc_yes"], "gsc_spk_b", "yes", "dev", "smoke_gsc")],
+        "test_kpi.csv": [row(clips["spk_c_world"], "spk_c", "world", "test", "smoke")],
+        "test_fa.csv": [row(clips["spk_c_world"], "spk_c", "", "test", "smoke")],
+    }
+    counts = _write_manifests(rows, output_dir)
+    _write_stats(counts, output_dir)
+
+    (output_dir / "keyword_vocab.json").write_text(json.dumps(["hello", "world"], indent=2))
+    (output_dir / "speaker_vocab.json").write_text(json.dumps(["spk_a", "spk_b", "spk_c"], indent=2))
+    (output_dir / "gsc_vocab.json").write_text(json.dumps(GSC_CLASSES, indent=2))
+    stats_json = {
+        "n_gsc_classes": len(GSC_CLASSES),
+        "n_aux_word_classes": 2,
+        "n_aux_speaker_classes": 3,
+        "smoke": True,
+    }
+    (output_dir / "STATS.json").write_text(json.dumps(stats_json, indent=2))
 
 
 def process_gsc(data_root: Path, seed: int) -> dict[str, list[dict[str, str]]]:
@@ -194,7 +251,17 @@ def main() -> None:
     parser.add_argument("--data-root", default="data/raw", type=Path)
     parser.add_argument("--output-dir", default="data/manifests", type=Path)
     parser.add_argument("--seed", default=42, type=int)
+    parser.add_argument(
+        "--smoke",
+        action="store_true",
+        help="Write tiny deterministic manifests without requiring downloaded datasets.",
+    )
     args = parser.parse_args()
+
+    if args.smoke:
+        write_smoke_manifests(args.output_dir)
+        print(f"Smoke manifests written to {args.output_dir}/")
+        return
 
     print(f"Processing datasets from {args.data_root}...")
     all_rows: dict[str, list[dict[str, str]]] = {}

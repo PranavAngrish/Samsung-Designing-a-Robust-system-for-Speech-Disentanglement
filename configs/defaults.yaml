@@ -1,5 +1,10 @@
 run_name: solospeak-default
 
+training:
+  stage: 1
+  checkpoint_every_steps: 500
+  upload_every_steps: 2000
+
 audio:
   sample_rate: 16000
   n_fft: 400
@@ -8,11 +13,12 @@ audio:
   n_mels: 80
   fmin: 20.0
   fmax: 7600.0
-  window_duration_s: 1.5
+  window_duration_s: 1.6
+  window_samples: 25600
+  window_frames: 160
 
 backbone:
   variant: bcresnet8
-  scale: 1.0
 
 heads:
   content_dim: 128
@@ -21,7 +27,6 @@ heads:
   dropout: 0.1
 
 fusion:
-  feature_names: [s_c, s_s, s_c_times_s_s, abs_diff, s_c_sq, s_s_sq]
   hidden_dims: [20, 10]
   tau_on: 0.65
   tau_off: 0.45
@@ -33,21 +38,6 @@ losses:
   adversarial: 0.1
   ce_aux: 0.5
   adversarial_ramp_steps: 5000
-
-training:
-  stage: 1
-  batch_size: 128
-  num_epochs: 30
-  optimizer: adamw
-  lr: 3.0e-3
-  weight_decay: 1.0e-4
-  warmup_steps: 1000
-  max_grad_norm: 5.0
-  precision: amp_bf16
-  seed: 42
-  num_workers: 4
-  resume_from: null
-  checkpoint_dir: checkpoints
 
 data:
   root: data/processed

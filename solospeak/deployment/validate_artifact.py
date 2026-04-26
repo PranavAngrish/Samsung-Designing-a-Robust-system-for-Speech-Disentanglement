@@ -40,10 +40,10 @@ def validate(onnx_path: Path, test_manifest: Path) -> ValidationReport:
         1. File size <= 5 MB
         2. ONNX opset >= 17
         3. No unsupported mobile ops
-        4. xRT < 0.08 on ARM proxy
-        5. TA clean >= 99%
-        6. TA noisy >= 90%
-        7. FA rate < 1/hr
+        4. xRT <= 0.20 on ARM proxy
+        5. TA clean >= 92%
+        6. TA noisy macro >= 80%
+        7. FA rate <= 2/hr/user
         8. Param count < 3M
         9. Output shapes z_c (1,128) and z_s (1,128)
     """

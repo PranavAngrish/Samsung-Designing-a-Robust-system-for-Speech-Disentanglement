@@ -7,7 +7,7 @@ template — TTS audio is NOT used for speaker template (different voices).
 
 from __future__ import annotations
 
-import numpy as np
+from solospeak.utils.types import FloatArray
 
 TTS_PROMPTS = [
     "a young female speaker says '{keyword}' clearly",
@@ -23,7 +23,7 @@ TTS_PROMPTS = [
 ]
 
 
-def synthesize_variants(keyword_text: str, n: int = 10, sr: int = 16000) -> list[np.ndarray]:
+def synthesize_variants(keyword_text: str, n: int = 10, sr: int = 16000) -> list[FloatArray]:
     """Generate n TTS variants of keyword_text using Parler-TTS.
 
     Returns list of float32 mono waveforms at sr Hz.

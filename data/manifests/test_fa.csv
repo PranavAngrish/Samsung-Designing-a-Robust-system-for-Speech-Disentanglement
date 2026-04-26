@@ -1,0 +1,2 @@
+file_path,duration_s,speaker_id,keyword_text,split,source_dataset,quadrant_class
+data/processed/smoke/audio/spk_c_world.wav,0.400,spk_c,,test,smoke,

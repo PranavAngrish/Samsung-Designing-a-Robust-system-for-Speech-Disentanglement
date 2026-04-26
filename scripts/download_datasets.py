@@ -98,9 +98,21 @@ def download_dataset(name: str) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Download SoloSpeak datasets")
     parser.add_argument("--dataset", default="all", choices=list(DATASETS) + ["all"])
+    parser.add_argument(
+        "--minimal",
+        action="store_true",
+        help="Create the Phase-0 smoke directory scaffold without network downloads.",
+    )
     args = parser.parse_args()
 
     targets = list(DATASETS) if args.dataset == "all" else [args.dataset]
+    if args.minimal:
+        for name in targets:
+            dest = Path(DATASETS[name]["dest"])
+            dest.mkdir(parents=True, exist_ok=True)
+            print(f"Prepared smoke directory: {dest}")
+        return
+
     for name in targets:
         print(f"Downloading {name}...")
         download_dataset(name)

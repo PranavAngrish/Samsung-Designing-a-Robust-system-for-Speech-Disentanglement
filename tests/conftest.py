@@ -4,17 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import numpy as np
 import pytest
 import torch
 
 from solospeak.utils.config import (
     AudioConfig,
     BackboneConfig,
-    DataConfig,
-    FusionConfig,
-    HeadConfig,
-    LossWeights,
     SoloSpeakConfig,
     TrainingConfig,
 )

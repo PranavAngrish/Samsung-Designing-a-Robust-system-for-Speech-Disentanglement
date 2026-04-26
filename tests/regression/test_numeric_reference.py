@@ -6,16 +6,12 @@ that don't depend on trained weights.
 
 from __future__ import annotations
 
-import numpy as np
-import pytest
 import torch
-import torch.nn.functional as F
 
 from solospeak.data.splits import assign_split
 from solospeak.inference.hysteresis import HysteresisDetector
 from solospeak.losses.orthogonality import orthogonality_loss
 from solospeak.enrollment.calibration import calibrate_threshold
-from solospeak.observability.dp_noise import add_laplace_noise
 
 
 def test_split_assignment_reference() -> None:

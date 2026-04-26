@@ -6,8 +6,6 @@ import json
 import zipfile
 from pathlib import Path
 
-import numpy as np
-import pytest
 
 from solospeak.deployment.ota_package import build_ota_package, _sha256
 from solospeak.deployment.validate_artifact import ValidationReport, GateResult

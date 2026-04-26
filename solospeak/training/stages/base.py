@@ -1,44 +1,47 @@
-"""Abstract base class for all training stages."""
+"""Abstract base for training stages."""
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Any, ClassVar
 
-import torch
-import torch.nn as nn
+from torch import nn
 from torch.utils.data import DataLoader
 
-if TYPE_CHECKING:
-    from solospeak.utils.config import SoloSpeakConfig
+from solospeak.utils.config import SoloSpeakConfig
+from solospeak.utils.types import LossDict, MetricsDict, StageBatch
 
 
 class TrainingStage(ABC):
-    stage_id: int
-    stage_name: str
-    go_no_go_metric: str
-    go_no_go_threshold: float
+    stage_id: ClassVar[int]
+    stage_name: ClassVar[str]
+    min_gate_metric: ClassVar[str]
+    min_gate_threshold: ClassVar[float]
+    target_gate_threshold: ClassVar[float]
 
-    def __init__(self, config: "SoloSpeakConfig") -> None:
+    def __init__(self, config: SoloSpeakConfig) -> None:
         self.config = config
         self.step = 0
 
     @abstractmethod
-    def prepare_data(self) -> tuple[DataLoader, DataLoader]: ...
+    def prepare_data(self) -> tuple[DataLoader[Any], ...]: ...
 
     @abstractmethod
     def build_model(self) -> nn.Module: ...
 
     @abstractmethod
-    def compute_loss(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]: ...
+    def compute_loss(self, batches: StageBatch, step: int) -> LossDict: ...
 
     @abstractmethod
-    def on_epoch_end(self, epoch: int) -> dict[str, float]: ...
+    def on_epoch_end(self, epoch: int) -> MetricsDict: ...
 
     @abstractmethod
-    def go_no_go_check(self) -> bool: ...
+    def go_no_go_check(self, metrics: MetricsDict) -> tuple[bool, bool]:
+        """Return ``(passed_min, passed_target)``."""
+        ...
 
+    @abstractmethod
     def run(self) -> Path:
-        """Main training loop. Returns path to saved checkpoint."""
-        raise NotImplementedError("Implement in Phase 3")
+        """Full training loop. Returns path to saved checkpoint."""
+        ...

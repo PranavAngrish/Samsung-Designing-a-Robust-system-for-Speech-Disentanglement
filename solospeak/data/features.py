@@ -14,8 +14,10 @@ from __future__ import annotations
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from solospeak.utils.config import AudioConfig
+from solospeak.utils.types import FloatArray
 
 
 def _build_mel_filterbank_torch(config: AudioConfig) -> torch.Tensor:
@@ -36,6 +38,26 @@ def _build_mel_filterbank_torch(config: AudioConfig) -> torch.Tensor:
     lower = (f - lo) / (center - lo).clamp(min=1e-10)
     upper = (hi - f) / (hi - center).clamp(min=1e-10)
     return torch.clamp(torch.minimum(lower, upper), min=0.0).float()
+
+
+def _center_crop_or_right_pad_torch(mel: torch.Tensor, frames: int) -> torch.Tensor:
+    current = mel.shape[-1]
+    if current == frames:
+        return mel
+    if current > frames:
+        start = (current - frames) // 2
+        return mel[..., start : start + frames]
+    return F.pad(mel, (0, frames - current))
+
+
+def _center_crop_or_right_pad_np(mel: FloatArray, frames: int) -> FloatArray:
+    current = mel.shape[-1]
+    if current == frames:
+        return mel
+    if current > frames:
+        start = (current - frames) // 2
+        return mel[..., start : start + frames]
+    return np.pad(mel, ((0, 0), (0, 0), (0, frames - current)), mode="constant")
 
 
 class LogMelExtractor(nn.Module):
@@ -77,7 +99,7 @@ class LogMelExtractor(nn.Module):
         # Mel filterbank: (B, F, T) × (F, M) → (B, M, T)
         mel = torch.einsum("bft,fm->bmt", power, self.fb)
 
-        log_mel = torch.log(mel.clamp(min=1e-6))
+        log_mel = _center_crop_or_right_pad_torch(torch.log(mel.clamp(min=1e-6)), c.window_frames)
         return log_mel.unsqueeze(1)  # (B, 1, n_mels, n_frames)
 
 
@@ -96,10 +118,12 @@ class LogMelExtractorDeploy:
     """
 
     def __init__(self, config: AudioConfig) -> None:
+        if config.win_length != config.n_fft:
+            raise ValueError("LogMelExtractorDeploy requires win_length == n_fft")
         self.config = config
         self._fb = self._build_mel_filterbank()
 
-    def _build_mel_filterbank(self) -> np.ndarray:
+    def _build_mel_filterbank(self) -> FloatArray:
         """HTK mel filterbank in strict float32 to match LogMelExtractor (torch) exactly."""
         c = self.config
         n_freqs = c.n_fft // 2 + 1
@@ -123,7 +147,7 @@ class LogMelExtractorDeploy:
         upper = (hi - f) / np.where(hi > center, hi - center, np.float32(1e-10))
         return np.asarray(np.maximum(np.float32(0), np.minimum(lower, upper)), dtype=np.float32)
 
-    def __call__(self, waveform: np.ndarray) -> np.ndarray:
+    def __call__(self, waveform: FloatArray) -> FloatArray:
         """(T,) float32 → (1, n_mels, T') float32"""
         c = self.config
         x = waveform.astype(np.float32)
@@ -153,4 +177,5 @@ class LogMelExtractorDeploy:
 
         # Log with clamp
         log_mel = np.log(np.maximum(mel, np.float32(1e-6))).astype(np.float32)
-        return np.asarray(log_mel.T[None, :, :], dtype=np.float32)  # (1, n_mels, n_frames)
+        fixed = _center_crop_or_right_pad_np(log_mel.T[None, :, :], c.window_frames)
+        return np.asarray(fixed, dtype=np.float32)  # (1, n_mels, window_frames)

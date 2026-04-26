@@ -2,40 +2,20 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
 import torch
 import torch.nn as nn
 
 from solospeak.models.fusion import GatedFusionMLP
+from solospeak.models.backbones.bcresnet import BCResNet
 from solospeak.models.heads import EmbeddingHead
-
-if TYPE_CHECKING:
-    from solospeak.utils.config import SoloSpeakConfig
+from solospeak.utils.config import SoloSpeakConfig
 
 
-def _build_backbone(config: "SoloSpeakConfig") -> nn.Module:
+def _build_backbone(config: SoloSpeakConfig) -> BCResNet:
     """Instantiate backbone from config. Raises if variant unknown."""
-    variant = config.backbone.variant
-    if variant == "matchboxnet":
-        from solospeak.models.backbones.matchboxnet import MatchboxNet
-        return MatchboxNet()
-    else:
-        from solospeak.models.backbones.bcresnet import BCResNet
-        return BCResNet(variant)
-
-
-def _backbone_channels(config: "SoloSpeakConfig") -> int:
-    """Return the output channel count for the configured backbone variant."""
-    channel_map = {
-        "bcresnet1": 16,
-        "bcresnet5": 40,
-        "bcresnet8": 64,
-        "bcresnet10": 80,
-        "bcresnet16": 128,
-        "matchboxnet": 128,
-    }
-    return channel_map[config.backbone.variant]
+    return BCResNet(config.backbone.variant)
 
 
 class SoloSpeakModel(nn.Module):
@@ -54,18 +34,18 @@ class SoloSpeakModel(nn.Module):
     only the fusion MLP is trained.
     """
 
-    def __init__(self, config: "SoloSpeakConfig") -> None:
+    def __init__(self, config: SoloSpeakConfig) -> None:
         super().__init__()
         self.config = config
         self.backbone = _build_backbone(config)
-        channels = _backbone_channels(config)
+        channels = self.backbone.output_channels()
         self.content_head = EmbeddingHead(
             channels, config.heads.hidden_dim, config.heads.content_dim, config.heads.dropout
         )
         self.speaker_head = EmbeddingHead(
             channels, config.heads.hidden_dim, config.heads.speaker_dim, config.heads.dropout
         )
-        self.fusion = GatedFusionMLP(config.fusion)
+        self.fusion_mlp = GatedFusionMLP(config.fusion)
 
     def forward(self, mel: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Training forward — returns content and speaker embeddings."""
@@ -76,7 +56,7 @@ class SoloSpeakModel(nn.Module):
 
     def forward_fusion(self, s_c: torch.Tensor, s_s: torch.Tensor) -> torch.Tensor:
         """Apply fusion head to cosine similarities."""
-        return cast(torch.Tensor, self.fusion(s_c, s_s))
+        return cast(torch.Tensor, self.fusion_mlp(s_c, s_s))
 
     def freeze_backbone_and_heads(self) -> None:
         """Freeze backbone + both heads for Stage 5 fusion training."""
@@ -93,6 +73,6 @@ class SoloSpeakModel(nn.Module):
             "backbone": sum(p.numel() for p in self.backbone.parameters()),
             "content_head": sum(p.numel() for p in self.content_head.parameters()),
             "speaker_head": sum(p.numel() for p in self.speaker_head.parameters()),
-            "fusion": sum(p.numel() for p in self.fusion.parameters()),
+            "fusion": sum(p.numel() for p in self.fusion_mlp.parameters()),
             "total": sum(p.numel() for p in self.parameters()),
         }

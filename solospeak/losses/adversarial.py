@@ -44,11 +44,14 @@ class AdversarialProbeHead(nn.Module):
 
     def __init__(self, embed_dim: int, n_classes: int) -> None:
         super().__init__()
-        self.fc = nn.Linear(embed_dim, n_classes)
+        self.net = nn.Sequential(
+            nn.Linear(embed_dim, 256),
+            nn.ReLU(inplace=True),
+            nn.Linear(256, n_classes),
+        )
 
-    def forward(self, z: torch.Tensor, lambda_: float = 1.0) -> torch.Tensor:
-        """Apply gradient reversal then linear classifier."""
-        return cast(torch.Tensor, self.fc(grad_reverse(z, lambda_)))
+    def forward(self, z: torch.Tensor) -> torch.Tensor:
+        return cast(torch.Tensor, self.net(z))
 
 
 def adversarial_lambda(step: int, ramp_steps: int, max_lambda: float = 0.1) -> float:

@@ -1,5 +1,0 @@
-backbone:
-  variant: matchboxnet
-  scale: 1.0
-# Fallback backbone: ~140K params, Apache-2.0 (NVIDIA)
-# Use if BC-ResNet-8 fails to converge in Stage 3

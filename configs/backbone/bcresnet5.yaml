@@ -1,4 +1,4 @@
+__base__: ../defaults.yaml
+
 backbone:
   variant: bcresnet5
-  scale: 1.0
-# Target: ~500K params, Galaxy Buds Pro deployment, xRT < 0.06 on ARM

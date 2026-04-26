@@ -1,6 +1,6 @@
 """Production streaming inference loop.
 
-Processes audio in 100 ms strides over a 1.5 s ring buffer.
+Processes audio in 100 ms strides over a 1.6 s ring buffer.
 VAD gates the expensive encoder — skips when no speech detected.
 """
 
@@ -10,8 +10,7 @@ from collections import deque
 
 import numpy as np
 
-from solospeak.inference.hysteresis import HysteresisDetector
-from solospeak.utils.types import UserProfile, WakeEvent
+from solospeak.utils.types import FloatArray, UserProfile, WakeEvent
 
 
 class RingBuffer:
@@ -21,10 +20,10 @@ class RingBuffer:
         self._buf: deque[float] = deque(maxlen=capacity)
         self.capacity = capacity
 
-    def push(self, chunk: np.ndarray) -> None:
+    def push(self, chunk: FloatArray) -> None:
         self._buf.extend(chunk.tolist())
 
-    def last(self, n: int) -> np.ndarray:
+    def last(self, n: int) -> FloatArray:
         buf = list(self._buf)
         if len(buf) < n:
             pad = np.zeros(n - len(buf), dtype=np.float32)
@@ -48,5 +47,5 @@ class StreamingDetector:
     ) -> None:
         raise NotImplementedError("Implement in Phase 5")
 
-    def step(self, chunk: np.ndarray) -> WakeEvent | None:
+    def step(self, chunk: FloatArray) -> WakeEvent | None:
         raise NotImplementedError("Implement in Phase 5")
