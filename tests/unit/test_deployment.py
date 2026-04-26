@@ -6,9 +6,13 @@ import json
 import zipfile
 from pathlib import Path
 
+import torch
 
 from solospeak.deployment.ota_package import build_ota_package, _sha256
 from solospeak.deployment.validate_artifact import ValidationReport, GateResult
+from solospeak.models.solospeak import SoloSpeakModel
+from solospeak.training.stages.stage6_qat import copy_float_weights_from_prepared
+from solospeak.utils.config import SoloSpeakConfig
 
 
 def test_sha256_is_deterministic(tmp_path: Path) -> None:
@@ -51,3 +55,25 @@ def test_validation_report_fails_on_one_fail() -> None:
     gates = [GateResult("g1", True, 1.0, 5.0, "ok"), GateResult("g2", False, 6.0, 5.0, "fail")]
     report = ValidationReport(gates)
     assert report.passed is False
+
+
+def test_copy_float_weights_from_prepared() -> None:
+    cfg = SoloSpeakConfig.from_yaml("configs/defaults.yaml")
+    prepared_source = SoloSpeakModel(cfg).train()
+    prepared_source.qconfig = torch.ao.quantization.get_default_qat_qconfig("fbgemm")
+    prepared = torch.ao.quantization.prepare_qat(prepared_source, inplace=False)
+
+    with torch.no_grad():
+        for param in prepared.parameters():
+            param.add_(0.001)
+
+    target = SoloSpeakModel(cfg)
+    copy_float_weights_from_prepared(prepared, target)
+
+    source_params = dict(prepared.named_parameters())
+    for name, param in target.named_parameters():
+        assert torch.allclose(param, source_params[name])
+    assert not any(
+        "FakeQuant" in type(module).__name__ or "Observer" in type(module).__name__
+        for module in target.modules()
+    )

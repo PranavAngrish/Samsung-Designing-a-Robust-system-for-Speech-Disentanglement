@@ -1,11 +1,4 @@
-"""Orchestrator: runs training stages sequentially, handles checkpoint handoff.
-
-Usage:
-    trainer = Trainer(config)
-    trainer.run_stage(1)
-    trainer.run_all_stages()
-    trainer.resume_from_stage(3)
-"""
+"""Phase-3 stage orchestrator."""
 
 from __future__ import annotations
 
@@ -13,9 +6,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from solospeak.training.stages.base import TrainingStage
     from solospeak.utils.config import SoloSpeakConfig
 
-# Checkpoint naming convention
+from solospeak.training.stages.common import inject_class_counts
+
 STAGE_CHECKPOINTS = {
     1: "stage1_backbone.pt",
     2: "stage2_dualhead.pt",
@@ -26,26 +21,73 @@ STAGE_CHECKPOINTS = {
 }
 
 
+def _stage_class(stage_id: int) -> type["TrainingStage"]:
+    if stage_id == 1:
+        from solospeak.training.stages.stage1_backbone import Stage1
+
+        return Stage1
+    if stage_id == 2:
+        from solospeak.training.stages.stage2_dual_head import Stage2
+
+        return Stage2
+    if stage_id == 3:
+        from solospeak.training.stages.stage3_disentangle import Stage3
+
+        return Stage3
+    if stage_id == 4:
+        from solospeak.training.stages.stage4_robustness import Stage4
+
+        return Stage4
+    if stage_id == 5:
+        from solospeak.training.stages.stage5_fusion import Stage5
+
+        return Stage5
+    if stage_id == 6:
+        from solospeak.training.stages.stage6_qat import Stage6
+
+        return Stage6
+    raise ValueError(f"Unknown stage_id {stage_id!r}")
+
+
 class Trainer:
+    """Run one stage with MIN/TARGET gate semantics."""
+
     def __init__(self, config: "SoloSpeakConfig") -> None:
         self.config = config
+        inject_class_counts(self.config)
         self.checkpoint_dir = config.training.checkpoint_dir
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     def run_stage(self, stage_id: int) -> Path:
-        """Run a single stage. Returns the saved checkpoint path."""
-        raise NotImplementedError("Implement in Phase 3")
+        """Run a single stage and return its checkpoint path."""
+        self.config.training.stage = stage_id  # type: ignore[assignment]
+        stage_cls = _stage_class(stage_id)
+        stage = stage_cls(self.config)
+        return stage.run()
 
-    def run_all_stages(self) -> None:
-        """Run stages 1–6 sequentially. Abort if any GO/NO-GO gate fails."""
-        raise NotImplementedError("Implement in Phase 3")
+    def run_all_stages(self) -> list[Path]:
+        """Run stages 1-6 sequentially. Abort only on MIN-gate failure."""
+        checkpoints: list[Path] = []
+        for stage_id in range(1, 7):
+            if stage_id > 1:
+                self.config.training.resume_from = self._checkpoint_path(stage_id - 1)
+            checkpoints.append(self.run_stage(stage_id))
+        return checkpoints
 
-    def resume_from_stage(self, stage_id: int) -> None:
-        """Load checkpoint from stage_id - 1, then run stage_id onwards."""
-        raise NotImplementedError("Implement in Phase 3")
+    def resume_from_stage(self, stage_id: int) -> list[Path]:
+        """Run ``stage_id`` through Stage 6, loading the previous checkpoint first."""
+        if stage_id < 1 or stage_id > 6:
+            raise ValueError("stage_id must be in [1, 6]")
+        checkpoints: list[Path] = []
+        for current in range(stage_id, 7):
+            if current > 1:
+                self.config.training.resume_from = self._checkpoint_path(current - 1)
+            checkpoints.append(self.run_stage(current))
+        return checkpoints
 
     def _checkpoint_path(self, stage_id: int) -> Path:
         return self.checkpoint_dir / STAGE_CHECKPOINTS[stage_id]
 
     def _checkpoint_exists(self, stage_id: int) -> bool:
         return self._checkpoint_path(stage_id).exists()
+

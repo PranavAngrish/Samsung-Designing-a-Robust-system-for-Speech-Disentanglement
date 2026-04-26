@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import torch
 import torch.nn as nn
 
 
@@ -17,16 +18,27 @@ class WandbCallback:
     """
 
     def __init__(self, project: str = "solospeak", run_name: str = "run") -> None:
-        raise NotImplementedError("Implement in Phase 3")
+        self.project = project
+        self.run_name = run_name
+        self._run: Any | None = None
+        try:
+            import wandb
+
+            self._run = wandb.init(project=project, name=run_name, mode="disabled")
+        except Exception:
+            self._run = None
 
     def log_step(self, step: int, metrics: dict[str, float]) -> None:
-        raise NotImplementedError("Implement in Phase 3")
+        if self._run is not None:
+            self._run.log(metrics, step=step)
 
     def log_epoch(self, epoch: int, metrics: dict[str, float]) -> None:
-        raise NotImplementedError("Implement in Phase 3")
+        if self._run is not None:
+            self._run.log({f"epoch/{key}": value for key, value in metrics.items()}, step=epoch)
 
     def finish(self) -> None:
-        raise NotImplementedError("Implement in Phase 3")
+        if self._run is not None:
+            self._run.finish()
 
 
 class CheckpointCallback:
@@ -45,7 +57,33 @@ class CheckpointCallback:
         config_dict: dict[str, Any],
         filename: str | None = None,
     ) -> Path:
-        raise NotImplementedError("Implement in Phase 3")
+        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        name = filename or f"stage{self.stage_id}_step{step}.pt"
+        path = self.checkpoint_dir / name
+        torch.save(
+            {
+                "model_state": model.state_dict(),
+                "step": step,
+                "metrics": metrics,
+                "config_snapshot": config_dict,
+                "stage_origin": self.stage_id,
+            },
+            path,
+        )
+        self._prune_old_checkpoints()
+        return path
+
+    def _prune_old_checkpoints(self) -> None:
+        if self.keep_last_n <= 0:
+            return
+        pattern = f"stage{self.stage_id}_step*.pt"
+        checkpoints = sorted(
+            self.checkpoint_dir.glob(pattern),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        for old in checkpoints[self.keep_last_n :]:
+            old.unlink(missing_ok=True)
 
 
 class EarlyStoppingCallback:

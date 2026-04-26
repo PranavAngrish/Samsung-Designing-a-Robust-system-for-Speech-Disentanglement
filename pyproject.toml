@@ -62,6 +62,7 @@ include = ["solospeak*", "scripts*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = ["-p", "no:capture"]
 markers = [
     "slow: marks tests requiring real data or long runtime",
     "gpu: marks tests requiring CUDA",
