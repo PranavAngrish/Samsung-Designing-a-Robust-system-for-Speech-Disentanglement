@@ -19,5 +19,5 @@ def orthogonality_loss(z_c: torch.Tensor, z_s: torch.Tensor) -> torch.Tensor:
     B = z_c.shape[0]
     z_c_c = z_c - z_c.mean(dim=0, keepdim=True)   # center
     z_s_c = z_s - z_s.mean(dim=0, keepdim=True)
-    C = z_c_c.T @ z_s_c / B                        # (D, D) cross-covariance
+    C = z_c_c.T @ z_s_c / max(B - 1, 1)             # (D, D) cross-covariance
     return (C**2).sum()

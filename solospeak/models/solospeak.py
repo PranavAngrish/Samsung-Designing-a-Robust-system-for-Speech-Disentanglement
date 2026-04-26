@@ -7,15 +7,15 @@ from typing import cast
 import torch
 import torch.nn as nn
 
+from solospeak.models.backbones.bcresnet import SoloSpeakResNet
 from solospeak.models.fusion import GatedFusionMLP
-from solospeak.models.backbones.bcresnet import BCResNet
 from solospeak.models.heads import EmbeddingHead
 from solospeak.utils.config import SoloSpeakConfig
 
 
-def _build_backbone(config: SoloSpeakConfig) -> BCResNet:
+def _build_backbone(config: SoloSpeakConfig) -> SoloSpeakResNet:
     """Instantiate backbone from config. Raises if variant unknown."""
-    return BCResNet(config.backbone.variant)
+    return SoloSpeakResNet(config.backbone.variant)
 
 
 class SoloSpeakModel(nn.Module):
@@ -38,7 +38,7 @@ class SoloSpeakModel(nn.Module):
         super().__init__()
         self.config = config
         self.backbone = _build_backbone(config)
-        channels = self.backbone.output_channels()
+        channels = self.backbone.output_channels
         self.content_head = EmbeddingHead(
             channels, config.heads.hidden_dim, config.heads.content_dim, config.heads.dropout
         )

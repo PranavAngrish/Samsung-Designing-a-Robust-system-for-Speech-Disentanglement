@@ -28,10 +28,10 @@ def test_output_in_zero_one(fusion: GatedFusionMLP) -> None:
     assert (out >= 0).all() and (out <= 1).all()
 
 
-def test_param_count_under_400() -> None:
+def test_param_count() -> None:
     fusion = GatedFusionMLP(FusionConfig())
     n = sum(p.numel() for p in fusion.parameters())
-    assert n <= 400, f"Fusion MLP has {n} params, expected <= 400"
+    assert n == 361, f"Got {n}"
 
 
 def test_gradient_flows_through_fusion(fusion: GatedFusionMLP) -> None:

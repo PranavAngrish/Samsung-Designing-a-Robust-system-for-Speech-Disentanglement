@@ -11,6 +11,8 @@ Used twice:
 
 from __future__ import annotations
 
+import warnings
+
 import torch
 import torch.nn as nn
 
@@ -29,28 +31,33 @@ class SupConLoss(nn.Module):
         self.temperature = temperature
 
     def forward(self, embeddings: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
-        B = embeddings.shape[0]
+        valid = labels >= 0
+        embeddings = embeddings[valid]
+        labels = labels[valid]
+        bsz = embeddings.shape[0]
+        if bsz <= 1:
+            warnings.warn("SupConLoss has no anchors with positives.", stacklevel=2)
+            return embeddings.sum() * 0.0
+
         device = embeddings.device
 
-        # Pairwise cosine similarities — already normalized so just dot products
-        sim = embeddings @ embeddings.T / self.temperature  # (B, B)
+        sim = embeddings @ embeddings.T / self.temperature
+        not_self = ~torch.eye(bsz, dtype=torch.bool, device=device)
+        pos_mask = (labels.unsqueeze(0) == labels.unsqueeze(1)) & not_self
+        pos_counts = pos_mask.sum(dim=1)
+        valid_anchors = pos_counts > 0
 
-        # Mask: same label, different sample
-        label_eq = labels.unsqueeze(0) == labels.unsqueeze(1)  # (B, B)
-        not_self = ~torch.eye(B, dtype=torch.bool, device=device)
-        pos_mask = label_eq & not_self                          # (B, B)
+        missing_frac = 1.0 - valid_anchors.float().mean().item()
+        if missing_frac > 0.25:
+            warnings.warn(
+                f"SupConLoss: {missing_frac:.1%} of anchors have no positives.",
+                stacklevel=2,
+            )
+        if not bool(valid_anchors.any()):
+            return embeddings.sum() * 0.0
 
-        # For numerical stability, subtract max per row (logsumexp trick)
-        sim_max, _ = sim.max(dim=1, keepdim=True)
-        sim = sim - sim_max.detach()
-
-        exp_sim = torch.exp(sim)
-        exp_sim_no_self = exp_sim * not_self.float()
-
-        log_prob = sim - torch.log(exp_sim_no_self.sum(dim=1, keepdim=True) + 1e-8)
-
-        # Mean over positives per anchor
-        n_pos = pos_mask.sum(dim=1).float().clamp(min=1)
-        loss = -(pos_mask.float() * log_prob).sum(dim=1) / n_pos
-
-        return loss.mean()
+        sim = sim.masked_fill(~not_self, float("-inf"))
+        log_prob = sim - torch.logsumexp(sim, dim=1, keepdim=True)
+        log_prob = torch.where(not_self, log_prob, torch.zeros_like(log_prob))
+        anchor_loss = -(pos_mask.float() * log_prob).sum(dim=1) / pos_counts.clamp(min=1)
+        return anchor_loss[valid_anchors].mean()

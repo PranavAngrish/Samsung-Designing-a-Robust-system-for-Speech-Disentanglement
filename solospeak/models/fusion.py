@@ -1,4 +1,4 @@
-"""400-parameter MLP that converts (s_c, s_s) → accept/reject probability.
+"""361-parameter MLP that converts (s_c, s_s) to accept/reject probability.
 
 Input features (6-dim):
     s_c          — cosine similarity, content head vs template
@@ -37,7 +37,7 @@ class GatedFusionMLP(nn.Module):
         for i in range(len(dims) - 1):
             layers.append(nn.Linear(dims[i], dims[i + 1]))
             if i < len(dims) - 2:
-                layers.append(nn.ReLU())
+                layers.append(nn.ReLU(inplace=True))
         layers.append(nn.Sigmoid())
         self.net = nn.Sequential(*layers)
 

@@ -41,3 +41,11 @@ def test_two_heads_have_separate_weights() -> None:
     speaker = EmbeddingHead(input_channels=32)
     for (n1, p1), (n2, p2) in zip(content.named_parameters(), speaker.named_parameters()):
         assert p1.data_ptr() != p2.data_ptr(), f"Shared param: {n1}"
+
+
+def test_two_bcresnet8_heads_param_count() -> None:
+    content = EmbeddingHead(input_channels=96)
+    speaker = EmbeddingHead(input_channels=96)
+    n = sum(p.numel() for p in content.parameters())
+    n += sum(p.numel() for p in speaker.parameters())
+    assert n == 115_456

@@ -52,9 +52,7 @@ class EmbeddingHead(nn.Module):
 class AuxiliaryHeads(nn.Module):
     """Training-only auxiliary classification heads. Stripped at ONNX export."""
 
-    def __init__(
-        self, embed_dim: int = 128, n_words: int = 1000, n_speakers: int = 7000
-    ) -> None:
+    def __init__(self, embed_dim: int, n_words: int, n_speakers: int) -> None:
         super().__init__()
         self.aux_word = nn.Linear(embed_dim, n_words)
         self.aux_speaker = nn.Linear(embed_dim, n_speakers)
