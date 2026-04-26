@@ -38,6 +38,7 @@ def test_build_ota_package_creates_zip(tmp_path: Path) -> None:
         assert "MANIFEST.json" in names
         assert "solospeak_int8.onnx" in names
         assert "silero_vad_v4.onnx" in names
+        assert "README.txt" in names
 
     with zipfile.ZipFile(zip_path) as zf:
         manifest = json.loads(zf.read("MANIFEST.json"))
@@ -49,6 +50,7 @@ def test_validation_report_passes_all() -> None:
     gates = [GateResult("g1", True, 1.0, 5.0, "ok"), GateResult("g2", True, 0.5, 1.0, "ok")]
     report = ValidationReport(gates)
     assert report.passed is True
+    assert report.all_passed is True
 
 
 def test_validation_report_fails_on_one_fail() -> None:

@@ -21,6 +21,7 @@ def build_ota_package(
         ├── MANIFEST.json
         ├── solospeak_int8.onnx
         ├── silero_vad_v4.onnx
+        ├── README.txt
         └── (signature.p7s — added by Samsung infra, not here)
     """
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -32,13 +33,24 @@ def build_ota_package(
             "solospeak_int8.onnx": _sha256(int8_onnx),
             "silero_vad_v4.onnx": _sha256(vad_onnx),
         },
+        "sizes_bytes": {
+            "solospeak_int8.onnx": int8_onnx.stat().st_size,
+            "silero_vad_v4.onnx": vad_onnx.stat().st_size,
+        },
         "min_android_api": 31,
     }
+    readme = (
+        "SoloSpeak OTA package\n"
+        f"Version: {version}\n\n"
+        "Unsigned hackathon artifact. Samsung-internal signing is intentionally outside "
+        "this repository.\n"
+    )
 
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("MANIFEST.json", json.dumps(manifest, indent=2))
         zf.write(int8_onnx, "solospeak_int8.onnx")
         zf.write(vad_onnx, "silero_vad_v4.onnx")
+        zf.writestr("README.txt", readme)
 
     return zip_path
 

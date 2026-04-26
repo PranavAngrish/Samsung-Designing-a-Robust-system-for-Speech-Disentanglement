@@ -50,6 +50,9 @@ wandb/
 # Reports (generated — not committed, reproduced by make eval)
 reports/
 
+# Local demo enrollment profiles
+profiles/
+
 # Secrets
 .env
 *.key
