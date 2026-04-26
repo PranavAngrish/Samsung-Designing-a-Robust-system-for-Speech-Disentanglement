@@ -1,5 +1,30 @@
-[
-  "spk_a",
-  "spk_b",
-  "spk_c"
-]
+{
+  "speaker_dev_00": 0,
+  "speaker_dev_01": 1,
+  "speaker_dev_02": 2,
+  "speaker_dev_03": 3,
+  "speaker_train_00": 4,
+  "speaker_train_01": 5,
+  "speaker_train_02": 6,
+  "speaker_train_03": 7,
+  "speaker_train_04": 8,
+  "speaker_train_05": 9,
+  "speaker_train_06": 10,
+  "speaker_train_07": 11,
+  "speaker_train_08": 12,
+  "speaker_train_09": 13,
+  "speaker_train_10": 14,
+  "speaker_train_11": 15,
+  "spk_dev_00": 16,
+  "spk_dev_01": 17,
+  "spk_dev_02": 18,
+  "spk_dev_03": 19,
+  "spk_train_00": 20,
+  "spk_train_01": 21,
+  "spk_train_02": 22,
+  "spk_train_03": 23,
+  "spk_train_04": 24,
+  "spk_train_05": 25,
+  "spk_train_06": 26,
+  "spk_train_07": 27
+}

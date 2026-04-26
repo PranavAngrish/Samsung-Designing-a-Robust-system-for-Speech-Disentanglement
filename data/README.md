@@ -1,49 +1,62 @@
 # Data
 
-Audio files are NOT committed to git. Only manifests (CSV files listing paths + labels) are committed.
+Audio files are not committed to git. Manifests, vocab files, license notes, and smoke
+fixtures are the reproducible interface between data preparation and training.
 
-## Setup
+## Smoke Path
 
 ```bash
-make download-data      # downloads all datasets to data/raw/
-make prepare-manifests  # generates CSVs in data/manifests/
+make download-data-smoke
+make prepare-manifests-smoke
+make pack-lmdb
 ```
 
-## Datasets
+The smoke path creates tiny deterministic audio under `data/raw/smoke/`, writes all seven
+canonical manifests, and can run without network access.
 
-| Dataset | License | Role | Size | Download |
-|---------|---------|------|------|----------|
-| Google Speech Commands v2 | CC-BY 4.0 | Stage 1 backbone pretrain | ~2.4 GB | Auto via script |
-| LibriPhrase | CC-BY 4.0 (based on LibriSpeech) | Primary content training | ~30 GB LibriSpeech base | Auto via script |
-| VoxCeleb 1 | CC-BY 4.0 | Speaker head training + eval | ~39 GB | **Requires academic access** |
-| VoxCeleb 2 | CC-BY 4.0 | Speaker head training | ~200 GB | **Requires academic access** |
-| MUSAN | CC-BY 4.0 | Noise augmentation | ~11 GB | Auto via script |
-| BUT Reverb DB / OpenSLR-28 | CC-BY 4.0 / CC0 | Room impulse responses | ~8 GB | Auto via script |
+## Full Path
 
-### VoxCeleb Access
+```bash
+make download-data
+python -m scripts.prepare_libriphrase --segments-csv data/processed/libriphrase_segments.csv
+make prepare-manifests
+make pack-lmdb
+```
 
-VoxCeleb requires an academic use agreement. Request access at:
-https://www.robots.ox.ac.uk/~vgg/data/voxceleb/
+LibriPhrase is generated from LibriSpeech after Montreal Forced Aligner 3.3.9 alignment
+using the `english_us_arpa` acoustic model and dictionary. Cache TextGrids under
+`data/processed/libriphrase_alignments/` and record their checksum here before training.
 
-Save the approval email to `data/licenses/voxceleb_approval.pdf` for Phase 2 submission proof.
+## Manifest Schema
 
-## Manifests (committed)
+Every manifest uses:
 
-Seven CSV files, each with columns: `file_path,duration_s,speaker_id,keyword_text,split,source_dataset,quadrant_class`
+```text
+file_path,start_s,end_s,duration_s,speaker_id,keyword_text,split,source_dataset,quadrant_class,profile_id,enrolled_user_id,enrolled_keyword_text,profile_path,trial_source,q3_gate_eligible,synthesis_backend,speaker_verification_score
+```
 
-| File | Purpose | Expected Rows |
-|------|---------|---------------|
-| train_content.csv | Content head training | ~40,000 |
-| train_speaker.csv | Speaker head training | ~1,000,000 |
-| train_gsc.csv | Stage-1 backbone pretrain | ~85,000 |
-| dev_content.csv | Content validation | ~5,000 |
-| dev_speaker.csv | Speaker validation | ~50,000 |
-| test_kpi.csv | 4-quadrant KPI eval | ~2,000 |
-| test_fa.csv | 10 hours FA-rate eval | ~600 |
+After `make pack-lmdb`, `file_path` values are rewritten to
+`lmdb://data/processed/audio.lmdb/<key>` and `data/processed/audio_lmdb_index.json`
+records the original source path, segment offsets, duration, and checksum.
 
-## License Audit
+## Required Files
 
-All datasets are CC-BY 4.0 or CC0, compatible with Apache-2.0 distribution of this codebase.
-Parler-TTS (used at enrollment) is Apache-2.0.
-g2p-en is MIT.
-Silero-VAD is MIT.
+- `train_content.csv`
+- `train_speaker.csv`
+- `train_gsc.csv`
+- `dev_content.csv`
+- `dev_speaker.csv`
+- `test_kpi.csv`
+- `test_fa.csv`
+- `keyword_vocab.json`
+- `gsc_vocab.json`
+- `speaker_vocab.json`
+- `STATS.md`
+- `STATS.json`
+
+## License Notes
+
+Save one markdown note per corpus under `data/licenses/` with source URL, license/terms
+snapshot date, allowed use, attribution text, and restrictions. VoxCeleb approval terms
+must be recorded before using VoxCeleb audio; otherwise use the Common Voice/LibriSpeech
+fallback and document the decision.

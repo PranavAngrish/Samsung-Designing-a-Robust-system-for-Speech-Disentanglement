@@ -7,11 +7,14 @@ The collate and dataset tests use in-memory synthetic data.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 import torch
 
-from solospeak.data.splits import assign_split
 from solospeak.data.datasets import collate_variable_length
+from solospeak.data.splits import assign_split
+from scripts.prepare_manifests import MANIFEST_COLUMNS
 
 
 # ---------------------------------------------------------------------------
@@ -123,15 +126,18 @@ def test_manifests_exist() -> None:
 
 
 @pytest.mark.slow
-def test_dataloader_throughput(tmp_path: "pytest.TempdirFixture") -> None:
+def test_dataloader_throughput(tmp_path: Path) -> None:
     """DataLoader must yield ≥200 samples/sec on CPU."""
-    import time
     import csv
+    import json
+    import time
+
     import numpy as np
     import soundfile as sf
-    from torch.utils.data import DataLoader
+
     from solospeak.data.datasets import DualHeadDataset, collate_variable_length
     from solospeak.utils.config import AudioConfig, DataConfig
+    from torch.utils.data import DataLoader
 
     # Build a small synthetic manifest + audio files
     n_items = 50
@@ -140,17 +146,36 @@ def test_dataloader_throughput(tmp_path: "pytest.TempdirFixture") -> None:
     manifest = tmp_path / "manifest.csv"
 
     with open(manifest, "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["file_path", "duration_s", "speaker_id", "keyword_text",
-                          "split", "source_dataset", "quadrant_class"])
+        writer = csv.DictWriter(f, fieldnames=MANIFEST_COLUMNS, lineterminator="\n")
+        writer.writeheader()
         for i in range(n_items):
             wav_path = audio_dir / f"clip_{i}.wav"
             wav = np.random.randn(16000).astype(np.float32) * 0.1
             sf.write(str(wav_path), wav, 16000)
-            writer.writerow([str(wav_path), "1.0", f"spk_{i % 5}", "hello",
-                              "train", "synthetic", ""])
+            writer.writerow({
+                "file_path": str(wav_path),
+                "start_s": "0.0",
+                "end_s": "1.0",
+                "duration_s": "1.0",
+                "speaker_id": f"spk_{i % 5}",
+                "keyword_text": "hello",
+                "split": "train",
+                "source_dataset": "synthetic",
+                "quadrant_class": "",
+                "profile_id": "",
+                "enrolled_user_id": "",
+                "enrolled_keyword_text": "",
+                "profile_path": "",
+                "trial_source": "real",
+                "q3_gate_eligible": "true",
+                "synthesis_backend": "",
+                "speaker_verification_score": "",
+            })
 
-    dataset = DualHeadDataset(manifest, AudioConfig(), DataConfig())
+    (tmp_path / "keyword_vocab.json").write_text(json.dumps({"hello": 0}))
+    (tmp_path / "speaker_vocab.json").write_text(json.dumps({f"spk_{i}": i for i in range(5)}))
+
+    dataset = DualHeadDataset(manifest, AudioConfig(), DataConfig(manifests_dir=tmp_path))
     loader = DataLoader(dataset, batch_size=16, num_workers=0,
                         collate_fn=collate_variable_length)
 

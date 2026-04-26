@@ -6,15 +6,16 @@ import numpy as np
 import pytest
 import torch
 
-from solospeak.data.features import LogMelExtractor, LogMelExtractorDeploy
+from solospeak.data.features import LogMelExtractor
+from solospeak.data.features_deploy import LogMelExtractorDeploy
 from solospeak.utils.config import AudioConfig
 
 
 @pytest.fixture()
 def ref_waveform() -> np.ndarray:
-    """Deterministic 1-second waveform: mix of 440 Hz + 1 kHz tones."""
+    """Deterministic 1.6-second waveform: mix of 440 Hz + 1 kHz tones."""
     sr = 16000
-    t = np.linspace(0, 1, sr, dtype=np.float32)
+    t = np.linspace(0, 1.6, int(1.6 * sr), dtype=np.float32)
     return 0.4 * np.sin(2 * np.pi * 440 * t) + 0.3 * np.sin(2 * np.pi * 1000 * t)
 
 
@@ -26,6 +27,7 @@ def test_train_extractor_output_shape(audio_config: AudioConfig, ref_waveform: n
     assert out.ndim == 4                        # (B, 1, n_mels, T')
     assert out.shape[1] == 1
     assert out.shape[2] == audio_config.n_mels
+    assert out.shape[-1] == audio_config.window_frames
 
 
 def test_deploy_extractor_output_shape(audio_config: AudioConfig, ref_waveform: np.ndarray) -> None:
@@ -34,6 +36,7 @@ def test_deploy_extractor_output_shape(audio_config: AudioConfig, ref_waveform: 
     assert out.ndim == 3                        # (1, n_mels, T')
     assert out.shape[0] == 1
     assert out.shape[1] == audio_config.n_mels
+    assert out.shape[-1] == audio_config.window_frames
 
 
 def test_train_deploy_same_time_frames(audio_config: AudioConfig, ref_waveform: np.ndarray) -> None:

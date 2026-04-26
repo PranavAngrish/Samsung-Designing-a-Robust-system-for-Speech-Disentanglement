@@ -1,4 +1,10 @@
-[
-  "hello",
-  "world"
-]
+{
+  "wake phrase 0": 0,
+  "wake phrase 1": 1,
+  "wake phrase 2": 2,
+  "wake phrase 3": 3,
+  "wake phrase 4": 4,
+  "wake phrase 5": 5,
+  "wake phrase 6": 6,
+  "wake phrase 7": 7
+}

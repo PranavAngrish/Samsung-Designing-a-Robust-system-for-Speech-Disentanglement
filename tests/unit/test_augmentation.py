@@ -26,27 +26,27 @@ from solospeak.data.augmentation import (
 def test_curriculum_starts_mild() -> None:
     aug = CurriculumAugmenter(total_steps=10_000, snr_final=(-5, 30))
     ranges = aug.current_ranges(0)
-    assert ranges["snr_range"][0] == 30   # starts at clean (SNR min = 30)
+    assert ranges["snr_range_db"][0] == 30   # starts at clean (SNR min = 30)
 
 
 def test_curriculum_reaches_full_at_halfway() -> None:
     aug = CurriculumAugmenter(total_steps=10_000, snr_final=(-5, 30))
     ranges = aug.current_ranges(5_000)
-    assert ranges["snr_range"][0] == -5   # full range at 50% of steps
+    assert ranges["snr_range_db"][0] == -5   # full range at 50% of steps
 
 
 def test_curriculum_clamps_beyond_halfway() -> None:
     aug = CurriculumAugmenter(total_steps=10_000, snr_final=(-5, 30))
     ranges = aug.current_ranges(99_999)
-    assert ranges["snr_range"][0] == -5
+    assert ranges["snr_range_db"][0] == -5
 
 
 def test_curriculum_distance_scales() -> None:
     aug = CurriculumAugmenter(total_steps=10_000, distance_final=(0.5, 5.0))
     r0 = aug.current_ranges(0)
     r_mid = aug.current_ranges(5_000)
-    assert r0["distance_range"][1] == pytest.approx(0.5, abs=0.1)
-    assert r_mid["distance_range"][1] == pytest.approx(5.0, abs=0.1)
+    assert r0["distance_range_m"][1] == pytest.approx(0.5, abs=0.1)
+    assert r_mid["distance_range_m"][1] == pytest.approx(5.0, abs=0.1)
 
 
 # ---------------------------------------------------------------------------

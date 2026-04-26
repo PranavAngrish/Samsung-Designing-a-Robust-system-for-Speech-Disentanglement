@@ -1,6 +1,47 @@
 {
+  "manifests": {
+    "dev_content.csv": {
+      "row_count": 24,
+      "unique_keywords": 4,
+      "unique_speakers": 4
+    },
+    "dev_speaker.csv": {
+      "row_count": 24,
+      "unique_keywords": 0,
+      "unique_speakers": 4
+    },
+    "test_fa.csv": {
+      "row_count": 6,
+      "unique_keywords": 0,
+      "unique_speakers": 6
+    },
+    "test_kpi.csv": {
+      "row_count": 40,
+      "unique_keywords": 4,
+      "unique_speakers": 5
+    },
+    "train_content.csv": {
+      "row_count": 80,
+      "unique_keywords": 8,
+      "unique_speakers": 8
+    },
+    "train_gsc.csv": {
+      "row_count": 350,
+      "unique_keywords": 35,
+      "unique_speakers": 350
+    },
+    "train_speaker.csv": {
+      "row_count": 80,
+      "unique_keywords": 0,
+      "unique_speakers": 12
+    }
+  },
+  "n_aux_speaker_classes": 28,
+  "n_aux_word_classes": 8,
   "n_gsc_classes": 35,
-  "n_aux_word_classes": 2,
-  "n_aux_speaker_classes": 3,
-  "smoke": true
+  "smoke": true,
+  "train_content": {
+    "row_count": 80,
+    "unique_phrase_speaker_pairs": 8
+  }
 }

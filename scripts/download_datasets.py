@@ -1,9 +1,9 @@
 """Idempotent dataset downloader.
 
 Usage:
-    python -m scripts.download_datasets
-    python -m scripts.download_datasets --dataset gsc_v2
     python -m scripts.download_datasets --dataset all
+    python -m scripts.download_datasets --dataset gsc_v2
+    python -m scripts.download_datasets --minimal
 
 Design:
     - Every download verified by SHA-256
@@ -16,10 +16,14 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import shutil
 import subprocess
 import tarfile
 import zipfile
 from pathlib import Path
+
+import numpy as np
+import soundfile as sf
 
 
 DATASETS: dict[str, dict[str, str]] = {
@@ -27,6 +31,21 @@ DATASETS: dict[str, dict[str, str]] = {
         "url": "http://download.tensorflow.org/data/speech_commands_v0.02.tar.gz",
         "sha256": "af14739ee7dc311471de98f5f9d2c9191b18aedfe957f4a6ff791c709868ff58",
         "dest": "data/raw/gsc_v2",
+    },
+    "librispeech_train_clean_100": {
+        "url": "https://www.openslr.org/resources/12/train-clean-100.tar.gz",
+        "sha256": "",
+        "dest": "data/raw/librispeech/train-clean-100",
+    },
+    "librispeech_train_clean_360": {
+        "url": "https://www.openslr.org/resources/12/train-clean-360.tar.gz",
+        "sha256": "",
+        "dest": "data/raw/librispeech/train-clean-360",
+    },
+    "librispeech_train_other_500": {
+        "url": "https://www.openslr.org/resources/12/train-other-500.tar.gz",
+        "sha256": "",
+        "dest": "data/raw/librispeech/train-other-500",
     },
     "musan": {
         "url": "https://www.openslr.org/resources/17/musan.tar.gz",
@@ -38,8 +57,7 @@ DATASETS: dict[str, dict[str, str]] = {
         "sha256": "",  # fill in after first download
         "dest": "data/raw/rirs",
     },
-    # VoxCeleb requires academic access — not auto-downloadable
-    # LibriPhrase generated from LibriSpeech — see data/README.md
+    # VoxCeleb requires academic access and is not auto-downloadable.
 }
 
 
@@ -67,12 +85,13 @@ def download_dataset(name: str) -> None:
             print(f"  {name}: already downloaded (SHA matches), skipping.")
             return
 
-    # Download with curl (resumable)
-    print(f"  Downloading {url} → {filename}")
-    subprocess.run(
-        ["curl", "--continue-at", "-", "-L", "--output", str(filename), url],
-        check=True,
-    )
+    if shutil.which("aria2c"):
+        print(f"  Downloading {url} → {filename} with aria2c")
+        subprocess.run(["aria2c", "-c", "-o", filename.name, "-d", str(dest), url], check=True)
+    else:
+        print(f"  Downloading {url} → {filename}")
+        subprocess.run(["curl", "--continue-at", "-", "-L", "--output", str(filename), url],
+                       check=True)
 
     # Verify SHA
     if expected_sha:
@@ -95,22 +114,30 @@ def download_dataset(name: str) -> None:
     print(f"  {name}: done.")
 
 
+def write_minimal_smoke_audio() -> None:
+    """Create a tiny deterministic audio fixture without network access."""
+    root = Path("data/raw/smoke/download_check")
+    root.mkdir(parents=True, exist_ok=True)
+    sr = 16000
+    t = np.linspace(0.0, 1.6, int(sr * 1.6), endpoint=False, dtype=np.float32)
+    wav = (0.05 * np.sin(2 * np.pi * 220.0 * t)).astype(np.float32)
+    sf.write(str(root / "smoke.wav"), wav, sr)
+    print(f"Prepared smoke audio: {root / 'smoke.wav'}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Download SoloSpeak datasets")
     parser.add_argument("--dataset", default="all", choices=list(DATASETS) + ["all"])
     parser.add_argument(
         "--minimal",
         action="store_true",
-        help="Create the Phase-0 smoke directory scaffold without network downloads.",
+        help="Create the Phase-1 smoke audio fixture without network downloads.",
     )
     args = parser.parse_args()
 
     targets = list(DATASETS) if args.dataset == "all" else [args.dataset]
     if args.minimal:
-        for name in targets:
-            dest = Path(DATASETS[name]["dest"])
-            dest.mkdir(parents=True, exist_ok=True)
-            print(f"Prepared smoke directory: {dest}")
+        write_minimal_smoke_audio()
         return
 
     for name in targets:

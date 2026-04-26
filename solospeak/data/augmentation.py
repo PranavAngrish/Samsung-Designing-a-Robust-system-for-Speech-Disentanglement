@@ -173,17 +173,17 @@ class SpecAugment:
         if random.random() > self.prob:
             return mel
         result = mel.clone()
-        F = mel.shape[-2]
-        T = mel.shape[-1]
+        n_freqs = mel.shape[-2]
+        n_frames = mel.shape[-1]
         for _ in range(self.n_freq_masks):
-            f = random.randint(0, min(self.freq_mask_width, F - 1))
+            f = random.randint(0, min(self.freq_mask_width, n_freqs - 1))
             if f > 0:
-                f0 = random.randint(0, F - f)
+                f0 = random.randint(0, n_freqs - f)
                 result[..., f0 : f0 + f, :] = 0.0
         for _ in range(self.n_time_masks):
-            t = random.randint(0, min(self.time_mask_width, T - 1))
+            t = random.randint(0, min(self.time_mask_width, n_frames - 1))
             if t > 0:
-                t0 = random.randint(0, T - t)
+                t0 = random.randint(0, n_frames - t)
                 result[..., t0 : t0 + t] = 0.0
         return result
 
@@ -204,12 +204,12 @@ class CurriculumAugmenter:
         self.snr_final = snr_final
         self.distance_final = distance_final
 
-    def current_ranges(self, step: int) -> dict[str, tuple[float, float]]:
+    def current_ranges(self, step: int) -> dict[str, tuple[int, int] | tuple[float, float]]:
         """Return the current SNR and distance ranges for a given training step."""
         progress = min(1.0, step / (0.5 * self.total_steps))
         snr_min = int(30 - progress * (30 - self.snr_final[0]))
         dist_max = 0.5 + progress * (self.distance_final[1] - 0.5)
         return {
-            "snr_range": (float(snr_min), float(self.snr_final[1])),
-            "distance_range": (0.5, dist_max),
+            "snr_range_db": (snr_min, self.snr_final[1]),
+            "distance_range_m": (0.5, dist_max),
         }
