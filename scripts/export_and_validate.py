@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 from pathlib import Path
 
 
@@ -116,6 +117,9 @@ def main() -> None:
     print(f"Validation report: {report_path}")
 
     vad_path = _ensure_vad_artifact(args.output_dir / "silero_vad_v4.onnx")
+    previous_slot = args.output_dir / "solospeak_int8_previous.onnx"
+    if not previous_slot.exists():
+        shutil.copyfile(int8_path, previous_slot)
     ota_path = build_ota_package(int8_path, vad_path, args.output_dir)
     print(f"OTA package: {ota_path}")
 

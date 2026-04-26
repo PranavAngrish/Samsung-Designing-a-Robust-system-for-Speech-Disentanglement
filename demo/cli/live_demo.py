@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import time
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,12 @@ from solospeak.data.features_deploy import LogMelExtractorDeploy
 from solospeak.enrollment.service import EnrollmentService
 from solospeak.enrollment.templates import load_profile, save_profile
 from solospeak.inference.streaming import StreamingInference
+from solospeak.observability.metrics import (
+    SoloSpeakLocalMetrics,
+    record_enrollment_attempt,
+    record_wake_event,
+    update_latency,
+)
 from solospeak.utils.audio import load_audio, pad_or_crop_to_window
 from solospeak.utils.config import AudioConfig
 from solospeak.utils.types import FloatArray
@@ -117,7 +124,14 @@ class OnnxEnrollmentEncoder:
 
 def _resolve_model(args: argparse.Namespace) -> Path:
     if args.model_slot == "previous":
-        return Path("artifacts/solospeak_int8_previous.onnx")
+        previous = Path("artifacts/solospeak_int8_previous.onnx")
+        if previous.exists():
+            return previous
+        current = Path(args.model)
+        if current.exists():
+            print("Previous model slot missing; using current slot for this demo run.")
+            return current
+        return previous
     return Path(args.model)
 
 
@@ -137,29 +151,46 @@ def _run_listen(profile_path: Path, model_path: Path, seconds: float, mic: bool)
     if not model_path.exists():
         print(f"Model not found: {model_path}")
         return
+    metrics = SoloSpeakLocalMetrics(model_version=profile.model_version)
+    latencies: list[float] = []
     detector = StreamingInference(model_path)
     detector.enroll_user(profile)
     hop = int(0.16 * 16000)
 
     if not mic:
+        start = time.perf_counter()
         event = detector.step(np.zeros(hop, dtype=np.float32))
+        latencies.append((time.perf_counter() - start) * 1000.0)
+        update_latency(metrics, latencies)
+        if event:
+            record_wake_event(metrics, event[0].user_id)
         print("Listen smoke check complete." if not event else f"WakeEvent: {event[0]}")
+        print(json.dumps(metrics.to_dict(), sort_keys=True))
         return
 
     import sounddevice as sd
 
     print("Listening. Press Ctrl+C to stop.")
     start = time.time()
+    last_metrics_print = start
     try:
         while time.time() - start < seconds:
             audio = sd.rec(hop, samplerate=16000, channels=1, dtype="float32")
             sd.wait()
+            infer_start = time.perf_counter()
             events = detector.step(np.asarray(audio[:, 0], dtype=np.float32))
+            latencies.append((time.perf_counter() - infer_start) * 1000.0)
+            update_latency(metrics, latencies[-200:])
             for event in events:
+                record_wake_event(metrics, event.user_id)
                 print(
                     f"WakeEvent user={event.user_id} fusion={event.fusion_score:.3f} "
                     f"content={event.content_score:.3f} speaker={event.speaker_score:.3f}"
                 )
+            now = time.time()
+            if now - last_metrics_print >= 60.0:
+                print(json.dumps(metrics.to_dict(), sort_keys=True))
+                last_metrics_print = now
     except KeyboardInterrupt:
         return
 
@@ -189,9 +220,15 @@ def main() -> None:
         if not args.user or not args.keyword:
             raise SystemExit("--enroll requires --user and --keyword.")
         _validate_keyword(args.keyword)
+        metrics = SoloSpeakLocalMetrics()
         encoder = OnnxEnrollmentEncoder(model_path)
         recordings = _load_recordings(args, args.keyword)
-        profile = EnrollmentService(encoder).enroll(args.user, args.keyword, recordings)
+        try:
+            profile = EnrollmentService(encoder).enroll(args.user, args.keyword, recordings)
+            record_enrollment_attempt(metrics, succeeded=True)
+        except Exception:
+            record_enrollment_attempt(metrics, succeeded=False)
+            raise
         profile_path = args.profile_dir / f"{_slug(args.user)}_{_slug(args.keyword)}.json"
         save_profile(profile, profile_path)
         print(f"Saved profile: {profile_path}")
@@ -199,6 +236,7 @@ def main() -> None:
             "SoloSpeak has learned how YOU say this phrase. "
             "It will not respond to other people saying it."
         )
+        print(json.dumps(metrics.to_dict(), sort_keys=True))
 
     if args.listen:
         if profile_path is None:
