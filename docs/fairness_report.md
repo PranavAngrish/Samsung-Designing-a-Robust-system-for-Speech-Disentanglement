@@ -2,51 +2,54 @@
 
 ## Status
 
-This report is complete for the smoke workflow and intentionally caveated for final
-evaluation. Optional demographic metadata is unavailable in the smoke manifests, so only
-the mandatory keyword-syllable subgroup is populated.
+The final Stage 7 artifact was validated on internal GSC-style Q1/Q2/Q3/Q4 trials plus
+40,000 external false-accept trials from Common Voice, LibriSpeech, background noise,
+and UrbanSound8K. Those sources improve acoustic diversity, but they do not provide a
+complete demographic fairness evaluation.
 
-## Subgroup KPI Table
+Demographic fields such as gender, age bucket, and accent bucket are not reliably
+available in the committed manifests. This report therefore documents the limitation
+instead of claiming demographic parity.
 
-Copied from `reports/subgroup_report.md` after the Phase 4 smoke evaluation:
+## Final Stage 7 Metrics
 
-| Subgroup | Bucket | Share / Metric |
-|---|---|---:|
-| keyword_syllable_count | 2 | 0.0000 |
-| keyword_syllable_count | 3 | 0.0000 |
-| keyword_syllable_count | 4+ | 1.0000 |
-| gender | unavailable | null |
-| age_bucket | unavailable | null |
-| accent_bucket | unavailable | null |
+| Metric | Value |
+|---|---:|
+| TA clean | 93.97% |
+| Q2 imposter rejection | 95.17% |
+| Q3 wrong-word rejection | 97.83% |
+| Q4 background rejection | 100.00% |
+| Quadrant minimum | 93.97% |
+| External FA rate | 0.300% |
+| External FA count | 120 / 40,000 |
 
-## Mandatory Subgroup Result
+## Available Subgroup Metadata
 
-`keyword_syllable_count` is the required subgroup. On the smoke report, the best bucket
-is `4+` at `1.0000` and the lowest populated numeric buckets are `2` and `3` at `0.0000`,
-so the smoke macro-TA gap is `1.0000`.
-
-This is not a real fairness claim because smoke manifests are tiny generated fixtures.
-The final report must recompute this after full data preparation and real evaluation.
-
-## Dataset Skew Acknowledgement
-
-The planned full training mix includes VoxCeleb-style speaker data, which is known to be
-skewed toward English-speaking adult public figures and underrepresents children,
-elderly speakers, many accents, and many languages. In the current smoke data,
-demographic fields are absent, so the measured available counts are:
+The committed smoke manifests are kept for CI and local wiring checks. They are not a
+fairness dataset. In those smoke manifests, optional demographic fields are unavailable:
 
 | Field | Available Rows | Missing Rows |
 |---|---:|---:|
-| gender | 0 | 46 |
-| age_bucket | 0 | 46 |
-| accent_bucket | 0 | 46 |
+| gender | 0 | all smoke rows |
+| age_bucket | 0 | all smoke rows |
+| accent_bucket | 0 | all smoke rows |
+
+## Dataset Skew Acknowledgement
+
+The training and validation sources are likely skewed toward English speech, public
+speech datasets, and recording conditions that differ from real Samsung-device use.
+Common Voice and LibriSpeech add variety, but they do not guarantee balanced coverage
+over gender, age, accent, language, microphone type, disability, or noisy household
+conditions.
 
 ## Planned Mitigations
 
 For v1.1, add a pinned multilingual Common Voice release and require demographic
-availability checks before reporting subgroup metrics. The target date is post-hackathon
-hardening in Q3 2026.
+availability checks before reporting subgroup metrics.
 
 For shared-device use, add enrollment warnings when two profiles have high template
-similarity. This reduces multi-user confusion risk and should be reported separately from
-demographic fairness.
+similarity. This reduces multi-user confusion risk and should be reported separately
+from demographic fairness.
+
+Before any commercial claim, run device-recorded subgroup evaluation with consented
+metadata and report confidence intervals for each subgroup.

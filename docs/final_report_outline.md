@@ -3,58 +3,89 @@
 ## 1. Executive Summary
 
 SoloSpeak is an on-device custom wake-word detector that requires both phrase match and
-speaker match before firing. Current generated metrics are smoke-only unless a full-data
-run replaces them.
+speaker match before firing. The final submitted artifact is
+`exports/solospeak_stage7_deployable_corrected.pt`, a Stage 7 corrected export with
+`tau_on = 0.27`.
 
 ## 2. Problem Analysis
 
-Describe the four quadrants: Q1 accept, Q2 imposter, Q3 wrong word, Q4 background.
+Define the four evaluation quadrants:
+
+- Q1: enrolled user says the enrolled phrase.
+- Q2: imposter says the enrolled phrase.
+- Q3: enrolled user says the wrong word.
+- Q4: background or unrelated audio.
+
+The product objective is to preserve Q1 true accepts while rejecting Q2, Q3, and Q4.
 
 ## 3. System Architecture
 
-Cover log-mel extraction, residual CNN backbone, content/speaker heads, template
-enrollment, fusion MLP, streaming hysteresis, ONNX export, and INT8 deployment.
+Cover log-mel extraction, BC-ResNet-style residual CNN backbone, content and speaker
+embedding heads, enrollment templates, the gated fusion MLP, streaming hysteresis, and
+the corrected Stage 7 deployable artifact.
 
 ## 4. Training Methodology
 
-Document stages 1-6, loss terms, augmentations, smoke data vs full data, and seed count
-(1 in the current reports).
+Document the production path:
 
-## 5. Scalability And Production Readiness
+```text
+Stage 1 backbone pretraining
+Stage 2 dual-head training
+Stage 3 disentanglement search
+Stage 4 robustness
+Stage 4D hard-Q2 mining
+Stage 5 fusion search
+Stage 6 final handoff evaluation/export
+Stage 7 external false-accept tuning
+Stage 7 joint threshold correction
+```
 
-Summarize deployment gates, OTA packaging, rollback slot, local metrics, DP plan, and
-threat model.
+Explain that hardware limits pushed the successful full training run to Kaggle, and the
+repository now contains the source-controlled migration of that successful notebook path.
+
+## 5. Key Calibration Finding
+
+The final notebook discovered that external-only calibration selected `tau=0.935`, which
+removed too many true accepts. The submitted model uses joint threshold calibration over:
+
+- internal Q1/Q2/Q3/Q4 verification scores
+- 40,000 external false-accept trials
+
+The corrected threshold is `tau_on = 0.27`.
 
 ## 6. Evaluation Results
 
-| Metric | Current Reported Value |
+| Metric | Final Stage 7 Value |
 |---|---:|
-| TA clean | 100.0% |
-| TA noisy macro | 100.0% |
-| FA/hr/user | 0.00 |
-| Q2 rejection | 100.0% |
-| Q3 rejection | 100.0% |
-| Q4 rejection | 100.0% |
-| INT8 size | 1.47 MB |
-| xRT local p95 | 0.0032 |
+| TA clean | 93.97% |
+| Q2 imposter rejection | 95.17% |
+| Q3 wrong-word rejection | 97.83% |
+| Q4 background rejection | 100.00% |
+| Quadrant minimum | 93.97% |
+| External FA rate | 0.300% |
+| External FA count | 120 / 40,000 |
+| Parameters | 1.10M |
 
-## 7. Ablation Analysis
+## 7. Deployment Readiness
 
-Use `reports/ablation_table.md`. Disclose which rows are `not_run` and the number of
-seeds.
+Summarize the deployable PyTorch artifact, ONNX export path, INT8 quantization path, OTA
+package layout, rollback slot, and the remaining need for real Samsung-device latency
+and microphone validation.
 
 ## 8. Samsung Ecosystem Fit
 
-Map SoloSpeak to Bixby, Buds, TVs, SmartThings, and shared household devices.
+Map SoloSpeak to Bixby, Galaxy Buds, Samsung TVs, SmartThings, and shared household
+devices where a wake event should be personalized by both phrase and speaker.
 
 ## 9. Honest Limitations
 
-- Smoke metrics do not prove final accuracy.
-- Placeholder VAD must be replaced for final demo.
-- Replay and voice-clone resistance are measured baselines, not solved defenses.
-- Optional demographic fairness metadata is currently unavailable in smoke manifests.
+- The final artifact is production-candidate for a hackathon, not field-certified.
+- Real-device microphone, latency, and UX validation are still required.
+- Replay and cloned-voice resistance are measured risks, not solved defenses.
+- Demographic fairness metrics are limited by unavailable demographic labels.
+- Large weights and reports are distributed as release artifacts, not committed to git.
 
 ## 10. Appendix
 
-Include KPI JSON, subgroup report, ablation table, validation report, threat model, and
-release manifest.
+Include the release manifest, reproducibility instructions, Stage 7 joint calibration
+summary, external FA summary, threat model, and deployment guide.

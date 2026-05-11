@@ -38,7 +38,7 @@ real-device latency, microphone, streaming, and UX validation before product use
 ## Links
 
 - Repository: https://github.com/pranavangrish/solospeak
-- Demo video: `PASTE_UNLISTED_YOUTUBE_URL_HERE`
+- Demo video: add the unlisted URL to `docs/submission_email.md` after recording
 - Release artifacts: https://github.com/pranavangrish/solospeak/releases
 - Architecture: [docs/architecture.md](docs/architecture.md)
 - Reproducibility: [docs/reproducibility.md](docs/reproducibility.md)
@@ -64,12 +64,12 @@ decisive window.
 make install-dev
 make download-data-smoke
 make prepare-manifests-smoke
-python -m scripts.run_stage --all
-make eval
-make ablation
-make export
-make test
+python -m scripts.run_production_pipeline --config configs/training/production.yaml --smoke
+pytest tests/regression -q
 ```
+
+The smoke workflow validates code wiring and artifact schemas. It is not the source of
+the final metrics below.
 
 ## Reproduce Final Result
 
@@ -159,7 +159,9 @@ passing test result.
 ## Deployment
 
 ```bash
-make export
+python -m scripts.export_and_validate \
+  --checkpoint checkpoints/stage7_final_corrected.pt \
+  --output-dir artifacts
 ```
 
 This produces:
@@ -172,6 +174,9 @@ This produces:
 
 The smoke workflow creates a valid placeholder `silero_vad_v4.onnx`. Replace it with the
 real pinned Silero VAD artifact before recording the live demo.
+
+`make export` is still available for local development, but it expects
+`checkpoints/latest.pt` to point at the intended checkpoint.
 
 ## Demo
 
@@ -205,6 +210,9 @@ This regenerates:
 - [docs/final_report_outline.md](docs/final_report_outline.md)
 - [docs/release_manifest.md](docs/release_manifest.md)
 - [docs/submission_email.md](docs/submission_email.md)
+
+Review generated files before sending. The demo URL and release URL are submission-time
+values and should not be left as placeholders.
 
 ## License
 

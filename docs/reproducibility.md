@@ -11,6 +11,9 @@ pip install -e ".[dev]"
 Generated checkpoints, profiles, reports, processed data, and exports are intentionally
 gitignored. Put large model files in a GitHub Release or Kaggle Dataset, not normal git.
 
+The committed smoke manifests are for CI and wiring checks. Full Stage 7 reproduction
+requires the real source datasets and the external false-accept roots listed below.
+
 ## Final Production Path
 
 The source-controlled production path is:
@@ -52,6 +55,14 @@ reports/stage7_final_kpi_verification.json
 
 The corrected final deployable must report `tau_on` close to `0.27`. Do not treat
 `exports/solospeak_stage7_deployable.pt` or any `tau=0.935` export as final.
+
+The released final artifact should match:
+
+```text
+exports/solospeak_stage7_deployable_corrected.pt
+sha256: e1121ba113a8d8a523841538b14b33d58bfcb5265e219ba3afaf759ea1cc91fc
+tau_on: 0.27
+```
 
 ## Stage Notes
 
@@ -105,6 +116,9 @@ make prepare-manifests-smoke
 python -m scripts.run_production_pipeline --config configs/training/production.yaml --smoke
 make test
 ```
+
+If local Python lacks `torch`, `pytest`, or Python 3.10+, create a fresh Python 3.10 or
+3.11 environment before running the smoke or regression checks.
 
 ## Production Summary Schema
 

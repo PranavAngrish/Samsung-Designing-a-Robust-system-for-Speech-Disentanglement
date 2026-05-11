@@ -3,6 +3,9 @@
 Audio files are not committed to git. Manifests, vocab files, license notes, and smoke
 fixtures are the reproducible interface between data preparation and training.
 
+The committed manifests are smoke-scale fixtures for CI and local wiring checks. They
+are not the full training/evaluation set used for the final Stage 7 metrics.
+
 ## Smoke Path
 
 ```bash
@@ -26,6 +29,10 @@ make pack-lmdb
 LibriPhrase is generated from LibriSpeech after Montreal Forced Aligner 3.3.9 alignment
 using the `english_us_arpa` acoustic model and dictionary. Cache TextGrids under
 `data/processed/libriphrase_alignments/` and record their checksum here before training.
+
+Final Stage 7 external false-accept validation additionally expects roots for Common
+Voice English, LibriSpeech, a background-noise dataset, and UrbanSound8K. Pass those
+roots through `scripts.run_stage --stage 7` or `scripts.run_production_pipeline`.
 
 ## Manifest Schema
 
@@ -60,3 +67,6 @@ Save one markdown note per corpus under `data/licenses/` with source URL, licens
 snapshot date, allowed use, attribution text, and restrictions. VoxCeleb approval terms
 must be recorded before using VoxCeleb audio; otherwise use the Common Voice/LibriSpeech
 fallback and document the decision.
+
+For release packaging, attach generated checkpoints, reports, and exports to a GitHub
+Release or Kaggle Dataset. Do not commit raw audio or generated weights to git.

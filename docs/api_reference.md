@@ -1,9 +1,64 @@
 # API Reference
 
 This hand-maintained reference lists the public functions used by the hackathon scripts.
-It can be replaced by generated `pdoc` output before final submission.
+It can be replaced by generated `pdoc` output later, but the entries below are the
+interfaces that matter for the Stage 7 submission.
+
+## Training And Reproduction
+
+`scripts.run_stage.main()`
+
+Runs an individual stage. Supported stages are `1`, `2`, `3`, `4`, `4d`, `5`, `6`, and
+`7`. Stage `4d` is the hard-Q2 mining stage; Stage `6` is final evaluation/export;
+Stage `7` is external false-accept tuning.
+
+`scripts.run_production_pipeline.run_production_pipeline(...)`
+
+Runs the source-controlled production path from Stage 1 through Stage 7 corrected
+export. The external false-accept dataset roots can be supplied by CLI or config.
+
+`scripts.run_stage7_verify.main()`
+
+Rebuilds internal Q1/Q2/Q3/Q4 verification scores and rescored external false-accept
+scores for a Stage 7 checkpoint.
+
+`scripts.run_stage7_finalization.main()`
+
+Exports the default Stage 7 deployable, runs joint internal plus external threshold
+calibration, and writes `exports/solospeak_stage7_deployable_corrected.pt`.
+
+## Stage 7 Evaluation
+
+`solospeak.eval.external_fa.discover_external_fa_audio(spec)`
+
+Discovers Common Voice, LibriSpeech, background-noise, and UrbanSound8K audio files for
+external false-accept trials.
+
+`solospeak.eval.external_fa.score_external_fa_rows(...)`
+
+Scores external false-accept rows and writes a CSV with `prob`, `s_c`, `s_s`,
+`accepted`, and source metadata.
+
+`solospeak.eval.internal_quadrants.build_gsc_internal_examples(...)`
+
+Builds speaker-disjoint GSC enrollment profiles and Q1/Q2/Q3/Q4 internal examples.
+
+`solospeak.eval.threshold_calibration.calibrate_joint_threshold(...)`
+
+Selects the final Stage 7 threshold using both internal Q1/Q2/Q3/Q4 scores and external
+false-accept scores. This is the corrected replacement for the bad external-only
+`tau=0.935` path.
 
 ## Deployment
+
+`solospeak.deployment.export_stage7.export_stage7_deployable(...)`
+
+Writes the intermediate Stage 7 deployable artifact before joint threshold correction.
+
+`solospeak.deployment.export_stage7.export_corrected_stage7(...)`
+
+Applies the joint-calibrated threshold and writes the final corrected deployable and
+checkpoint.
 
 `solospeak.deployment.export_onnx.ExportWrapper`
 

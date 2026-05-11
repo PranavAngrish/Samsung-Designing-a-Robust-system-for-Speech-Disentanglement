@@ -1,15 +1,36 @@
 # Deployment Guide
 
-## Export
+## Final Submitted Artifact
 
-Run:
+The hackathon submission artifact is:
+
+```text
+exports/solospeak_stage7_deployable_corrected.pt
+```
+
+It is a lightweight PyTorch deployable package containing the Stage 7 model weights,
+deployment config, final `tau_on = 0.27`, and Stage 7 calibration metadata. This is the
+artifact to attach to the release and use for final metric claims.
+
+## ONNX And INT8 Export
+
+For a mobile-style deployment package, export from the corrected Stage 7 checkpoint:
+
+```bash
+python -m scripts.export_and_validate \
+  --checkpoint checkpoints/stage7_final_corrected.pt \
+  --output-dir artifacts
+```
+
+The legacy shortcut below is still available, but it expects `checkpoints/latest.pt` to
+point at the intended checkpoint:
 
 ```bash
 make export
 ```
 
-This calls `scripts/export_and_validate.py`, which performs FP32 ONNX export, Conv-only
-INT8 quantization, validation gates, and OTA package assembly.
+`scripts/export_and_validate.py` performs FP32 ONNX export, Conv-only INT8 quantization,
+validation gates, and OTA package assembly.
 
 ## Artifact Layout
 
@@ -25,11 +46,11 @@ artifacts/solospeak_ota_v1.0.0.zip
 ```
 
 The `previous` slot is created as a local rollback simulation if no earlier artifact is
-present. In a real release, it should contain the last known-good model.
+present. In a real release, it should contain the last known-good signed model.
 
 ## Validation Gates
 
-The final artifact must pass:
+The ONNX/INT8 deployment package must pass:
 
 1. File size <= 5 MB.
 2. ONNX opset >= 17.
@@ -42,7 +63,8 @@ The final artifact must pass:
 9. Required output names and shapes.
 10. INT8 vs FP32 degradation <= 1.0 percentage point.
 
-Gate 10 runs only when an FP32 path is supplied. `make export` supplies it.
+Gate 10 runs only when an FP32 path is supplied. `scripts.export_and_validate` supplies
+it during the full export command above.
 
 ## OTA Package
 
@@ -55,7 +77,9 @@ silero_vad_v4.onnx
 README.txt
 ```
 
-Signing is outside this repository. The hackathon package is unsigned.
+Signing is outside this repository. The hackathon package is unsigned. The smoke
+workflow can generate a placeholder `silero_vad_v4.onnx`; replace it with the real
+pinned Silero VAD artifact before presenting a real microphone demo.
 
 ## Rollback Demo
 

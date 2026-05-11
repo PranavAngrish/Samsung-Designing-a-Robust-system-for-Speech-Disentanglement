@@ -48,15 +48,26 @@ embedding extraction.
 
 ## Training Stages
 
-Stage 1 trains the backbone on speech-command classification. Stages 2-4 train the dual
-content/speaker embedding heads with contrastive, orthogonality, adversarial, and
-robustness objectives. Stage 5 trains the fusion MLP on quadrant trials. Stage 6 prepares
-the checkpoint for quantization-aware deployment.
+Stage 1 trains the backbone on speech-command classification. Stage 2 trains the
+dual-head embedding model. Stage 3 turns on disentanglement/probe search. Stage 4 adds
+robustness. Stage 4D mines hard Q2 same-word imposters. Stage 5 trains and selects the
+fusion MLP. Stage 6 performs the final Stage 5 handoff evaluation/export. Stage 7 tunes
+the fusion head against external false accepts, rebuilds internal verification scores,
+and applies the corrected joint threshold.
+
+The final submitted artifact is `exports/solospeak_stage7_deployable_corrected.pt` with
+`tau_on = 0.27`.
+
+## Calibration
+
+The final notebook found that calibrating on external false accepts alone selected
+`tau=0.935`, which rejected too many true accepts. The corrected Stage 7 export sweeps
+thresholds jointly over internal Q1/Q2/Q3/Q4 scores and external false-accept scores.
 
 ## Deployment
 
-`make export` writes `artifacts/solospeak_fp32.onnx`, quantizes Conv nodes only into
-`artifacts/solospeak_int8.onnx`, runs validation gates, and assembles
+`scripts.export_and_validate` writes `artifacts/solospeak_fp32.onnx`, quantizes Conv
+nodes into `artifacts/solospeak_int8.onnx`, runs validation gates, and assembles
 `artifacts/solospeak_ota_v1.0.0.zip`. The fusion MLP remains FP32 inside the ONNX graph.
 
 ## Privacy Boundary
@@ -67,6 +78,6 @@ future opt-in telemetry path applies differential privacy noise.
 
 ## Current Caveats
 
-The current repository has smoke data and smoke checkpoints. Final KPI claims require
-real data download, full training, real profile templates, and the real pinned Silero VAD
-artifact.
+The Stage 7 artifact is a production-candidate hackathon result, not a field-certified
+commercial wake-word model. It still needs real Samsung-device latency, microphone,
+streaming, replay, cloned-voice, and UX validation before product release.

@@ -2,9 +2,9 @@
 
 ## Scope
 
-This document names the security risks SoloSpeak v1.0 explicitly considers. It is not a
-claim that the current smoke artifact is secure against all attacks. The goal is to make
-the risks measurable and honest for the hackathon submission.
+This document names the security risks SoloSpeak v1.0 explicitly considers. The Stage 7
+artifact is a production-candidate hackathon result, not a claim of complete security.
+The goal is to make risks measurable and honest before any product release.
 
 ## Replay Attacks
 
@@ -25,22 +25,37 @@ Residual risk: high until real replay data is collected and evaluated.
 Attack vector: another person says the same phrase, mimics the user, or uses a synthetic
 voice clone.
 
-Current mitigation in v1.0: the speaker embedding head and fusion MLP require both phrase
-and speaker similarity. Phase 4 reports Q2 imposter rejection.
+Current mitigation in v1.0: the speaker embedding head and fusion MLP require both
+phrase and speaker similarity. The final Stage 7 result reports Q2 imposter rejection
+of 95.17%.
 
-Planned mitigation: add voice-clone stress data and report rejection on cloned and mimicry
-trials separately.
+Planned mitigation: add voice-clone stress data and report rejection on cloned and
+mimicry trials separately.
 
 Residual risk: medium. Voice cloning can improve quickly and should be tracked as a
 moving benchmark.
+
+## Wrong-Word And Background Triggers
+
+Attack vector: the enrolled user says a nearby phrase, or background audio resembles the
+wake phrase.
+
+Current mitigation in v1.0: the content head and fusion MLP reject wrong-word and
+background trials. The final Stage 7 result reports 97.83% Q3 rejection and 100.00% Q4
+rejection on the verification protocol.
+
+Planned mitigation: expand hard negative mining with more phonetic neighbors,
+far-field TV audio, and device-specific background recordings.
+
+Residual risk: low to medium until evaluated on more device and room conditions.
 
 ## Adversarial Audio
 
 Attack vector: a white-box attacker perturbs mel features to force accept or reject.
 
-Current mitigation in v1.0: no certified defense. INT8 quantization may reduce some small
-perturbations, but it is not a guarantee. `solospeak.security.adversarial_eval` emits a
-white-box FGSM baseline.
+Current mitigation in v1.0: no certified defense. INT8 quantization may reduce some
+small perturbations, but it is not a guarantee. `solospeak.security.adversarial_eval`
+emits a white-box FGSM baseline.
 
 Planned mitigation: adversarial training on mel perturbations and post-window score
 consistency checks.
@@ -49,10 +64,11 @@ Residual risk: medium in white-box settings, lower for casual physical-world att
 
 ## Profile Theft
 
-Attack vector: an attacker extracts stored content and speaker templates from the device.
+Attack vector: an attacker extracts stored content and speaker templates from the
+device.
 
-Current mitigation in v1.0: profiles store normalized embeddings, not raw audio. The demo
-stores plaintext local profiles for development only.
+Current mitigation in v1.0: profiles store normalized embeddings, not raw audio. The
+demo stores plaintext local profiles for development only.
 
 Planned mitigation: Android Keystore-backed encryption, biometric-gated profile export,
 and automatic profile invalidation on device compromise signals.
@@ -64,8 +80,8 @@ Residual risk: medium until encrypted profile storage is implemented.
 Attack vector: one enrolled user's phrase or voice accidentally triggers another user's
 profile on a shared device.
 
-Current mitigation in v1.0: per-user templates and thresholds; multi-user inference emits
-at most one highest-scoring wake event per frame.
+Current mitigation in v1.0: per-user templates and thresholds; multi-user inference
+emits at most one highest-scoring wake event per frame.
 
 Planned mitigation: cross-profile calibration, conflict warnings during enrollment, and
 per-user false-accept reporting.
