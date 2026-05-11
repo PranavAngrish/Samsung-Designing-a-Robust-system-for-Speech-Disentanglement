@@ -17,7 +17,8 @@ STAGE_CHECKPOINTS = {
     3: "stage3_disentangle.pt",
     4: "stage4_robust.pt",
     5: "stage5_fusion.pt",
-    6: "stage6_qat.pt",
+    6: "stage6_final.pt",
+    7: "stage7_fusion.pt",
 }
 
 
@@ -43,9 +44,13 @@ def _stage_class(stage_id: int) -> type["TrainingStage"]:
 
         return Stage5
     if stage_id == 6:
-        from solospeak.training.stages.stage6_qat import Stage6
+        from solospeak.training.stages.stage6_final_eval import Stage6FinalEval
 
-        return Stage6
+        return Stage6FinalEval
+    if stage_id == 7:
+        from solospeak.training.stages.stage7_fa_tuning import Stage7
+
+        return Stage7
     raise ValueError(f"Unknown stage_id {stage_id!r}")
 
 
@@ -66,20 +71,20 @@ class Trainer:
         return stage.run()
 
     def run_all_stages(self) -> list[Path]:
-        """Run stages 1-6 sequentially. Abort only on MIN-gate failure."""
+        """Run stages 1-7 sequentially. Abort only on MIN-gate failure."""
         checkpoints: list[Path] = []
-        for stage_id in range(1, 7):
+        for stage_id in range(1, 8):
             if stage_id > 1:
                 self.config.training.resume_from = self._checkpoint_path(stage_id - 1)
             checkpoints.append(self.run_stage(stage_id))
         return checkpoints
 
     def resume_from_stage(self, stage_id: int) -> list[Path]:
-        """Run ``stage_id`` through Stage 6, loading the previous checkpoint first."""
-        if stage_id < 1 or stage_id > 6:
-            raise ValueError("stage_id must be in [1, 6]")
+        """Run ``stage_id`` through Stage 7, loading the previous checkpoint first."""
+        if stage_id < 1 or stage_id > 7:
+            raise ValueError("stage_id must be in [1, 7]")
         checkpoints: list[Path] = []
-        for current in range(stage_id, 7):
+        for current in range(stage_id, 8):
             if current > 1:
                 self.config.training.resume_from = self._checkpoint_path(current - 1)
             checkpoints.append(self.run_stage(current))
@@ -90,4 +95,3 @@ class Trainer:
 
     def _checkpoint_exists(self, stage_id: int) -> bool:
         return self._checkpoint_path(stage_id).exists()
-

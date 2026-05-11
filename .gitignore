@@ -9,6 +9,9 @@ __pycache__/
 dist/
 build/
 .eggs/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
 
 # Virtual environments
 .venv/
@@ -37,6 +40,11 @@ wandb/
 # Jupyter
 .ipynb_checkpoints/
 *.ipynb
+
+# Local agent/Kaggle packaging scratch
+.codex_kaggle/
+kaggle_*_upload/
+dataset-metadata.json
 
 # IDE
 .vscode/

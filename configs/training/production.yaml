@@ -1,0 +1,88 @@
+__base__: ../defaults.yaml
+run_name: production_stage1_to_stage7_corrected
+
+fusion:
+  tau_on: 0.27
+  tau_off: 0.45
+
+training:
+  stage: 7
+  checkpoint_dir: checkpoints
+  seed: 42
+  precision: fp32
+  resume_from: checkpoints/stage6_final.pt
+
+data:
+  root: data/processed
+  manifests_dir: data/manifests
+  external_common_voice_roots: []
+  external_librispeech_roots: []
+  external_background_noise_roots: []
+  external_urbansound_roots: []
+  external_fa_max_total_trials: 40000
+
+stage4d:
+  wake_word: zero
+  n_enroll: 2
+  max_eval_profiles: 70
+  output_checkpoint: checkpoints/stage4d_hardq2_mining_balanced.pt
+  last_checkpoint: checkpoints/stage4d_hardq2_last.pt
+  production_checkpoint: checkpoints/stage4d_hardq2_production.pt
+  results_json: reports/stage4d_hardq2_results.json
+  replace_stage4_robust_on_accept: false
+
+stage5:
+  reproduce_winner_only: true
+  stage4_candidate_name: stage4d_hardq2_mining_balanced
+  stage4_candidate_checkpoint: checkpoints/stage4d_hardq2_mining_balanced.pt
+  data_variant_name: zero_e3_product
+  wake_word: zero
+  n_enroll: 3
+  q1_per_profile: 2
+  q2_per_profile: 4
+  q3_per_profile: 2
+  q4_per_profile: 2
+  fusion_variant_name: q2_very_strong
+  lr: 0.0006
+  epochs: 700
+  patience: 100
+  batch_size: 256
+  weight_decay: 0.0001
+  q1_weight: 1.2
+  q2_weight: 4.0
+  q3_weight: 0.2
+  q4_weight: 0.2
+  pos_weight_scale: 0.8
+
+stage6:
+  test_kpi_manifest: data/manifests/test_kpi.csv
+  test_fa_manifest: data/manifests/test_fa.csv
+  output_checkpoint: checkpoints/stage6_final.pt
+  compatibility_checkpoint: checkpoints/stage6_final.pt
+  deployable_path: exports/solospeak_stage6_deployable.pt
+  metrics_json: reports/stage6_final_metrics.json
+  summary_json: reports/stage6_summary.json
+  test_scores_csv: reports/stage6_test_scores.csv
+  fa_scores_csv: reports/stage6_fa_scores.csv
+  threshold_diagnostic_csv: reports/stage6_threshold_diagnostic.csv
+
+stage7:
+  wake_word: zero
+  n_enroll: 3
+  max_profiles: 300
+  max_external_fa_trials: 40000
+  max_easy_external_negatives: 12000
+  stage7_checkpoint: checkpoints/stage7_fusion.pt
+  final_checkpoint: checkpoints/stage7_final_corrected.pt
+  deployable_path: exports/solospeak_stage7_deployable_corrected.pt
+  external_manifest: reports/stage7_external_fa_manifest.csv
+  stage6_external_scores: reports/stage7_external_fa_stage6_scores.csv
+  stage7_external_scores: reports/stage7_external_fa_scores.csv
+  external_summary: reports/stage7_external_fa_summary.json
+  internal_scores: reports/stage7_final_internal_scores.csv
+  joint_calibration_summary: reports/stage7_joint_threshold_calibration_summary.json
+  final_kpi_verification: reports/stage7_final_kpi_verification.json
+  external_fa_rate_max: 0.005
+  common_voice_fa_rate_max: 0.005
+  q2_rejection_min: 0.95
+  ta_clean_min: 0.92

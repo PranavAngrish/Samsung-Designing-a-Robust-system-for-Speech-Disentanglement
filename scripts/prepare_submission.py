@@ -73,26 +73,34 @@ def _metrics(reports_dir: Path, artifacts_dir: Path) -> dict[str, str]:
         "int8_size_mb": f"{size_mb:.2f}",
         "xrt_p95": _float(_gate_value(validation, "xrt_p95"), 4),
         "speaker_probe_reduction": _pct(probes.get("reduction_c")),
-        "seed_count": str(len(kpi.get("seeds", [])) if isinstance(kpi.get("seeds"), list) else 0),
-        "smoke_only": "yes" if kpi.get("num_eval_samples", 0) and kpi.get("ta_clean") == 1.0 else "unknown",
+        "seed_count": str(
+            len(kpi.get("seeds", [])) if isinstance(kpi.get("seeds"), list) else 0
+        ),
+        "smoke_only": (
+            "yes"
+            if kpi.get("num_eval_samples", 0) and kpi.get("ta_clean") == 1.0
+            else "unknown"
+        ),
     }
 
 
 def _write_release_manifest(output: Path, reports_dir: Path, artifacts_dir: Path) -> None:
     artifacts = [
-        Path("checkpoints/stage6_qat.pt"),
-        artifacts_dir / "solospeak_int8.onnx",
-        artifacts_dir / "solospeak_int8_previous.onnx",
-        reports_dir / "kpi_final.json",
-        reports_dir / "probes.json",
-        reports_dir / "ablation_table.md",
-        reports_dir / "subgroup_report.md",
+        Path("exports/solospeak_stage7_deployable_corrected.pt"),
+        Path("checkpoints/stage7_final_corrected.pt"),
+        Path("checkpoints/stage7_fusion.pt"),
+        Path("checkpoints/stage6_final.pt"),
+        Path("checkpoints/stage5_fusion.pt"),
+        Path("checkpoints/stage4d_hardq2_mining_balanced.pt"),
+        reports_dir / "production_pipeline_summary.json",
+        reports_dir / "stage7_joint_threshold_calibration_summary.json",
+        reports_dir / "stage7_final_kpi_verification.json",
     ]
     rows = [_artifact_row(path) for path in artifacts]
     lines = [
         "# Release Manifest",
         "",
-        "Tag: `v1.0.0-phase2`",
+        "Tag: `v1.0.0-stage7-corrected`",
         "",
         "| Artifact | Size | SHA-256 |",
         "|---|---:|---|",
@@ -138,7 +146,7 @@ Headline results, with full tables in the report:
 - Q3 phonetic-neighbor rejection: {metrics["q3_rejection"]}
 - Model size: {metrics["params_m"]} params, {metrics["int8_size_mb"]} MB INT8
 - xRT local p95: {metrics["xrt_p95"]} (HARD gate 0.20, STRETCH 0.08)
-- Disentanglement: speaker-probe-on-z_c reduced by {metrics["speaker_probe_reduction"]} vs Stage 2 baseline
+- Disentanglement: speaker probe on z_c reduced by {metrics["speaker_probe_reduction"]}
 - All 4 quadrants (Q1/Q2/Q3/Q4) explicitly evaluated
 
 Important caveat: current generated numbers are smoke-run numbers unless replaced by a
@@ -161,9 +169,9 @@ Target: 10 minutes, 1080p, 30 fps.
 |---:|---|---|
 | 0:00-0:30 | Title | "SoloSpeak wakes only when you say your keyword." |
 | 0:30-2:00 | Enrollment | Show `--enroll --user pranav --keyword "hey prism" --mic`. |
-| 2:00-3:30 | Positives | Same user at 0.5 m, 2 m, and 4 m. Keep failed takes visible or retake honestly. |
+| 2:00-3:30 | Positives | Same user at 0.5 m, 2 m, and 4 m. Retake honestly. |
 | 3:30-5:00 | Negatives | Friend says phrase, user says phonetic neighbor, TV/background audio. |
-| 5:00-7:00 | Architecture | Explain content head, speaker head, fusion MLP, and on-device privacy. |
+| 5:00-7:00 | Architecture | Explain content head, speaker head, fusion MLP, privacy. |
 | 7:00-8:00 | KPI Dashboard | Use numbers from `reports/kpi_final.json`; do not boost them. |
 | 8:00-9:00 | Samsung Fit | Bixby, Galaxy Buds, SmartThings shared-device wake. |
 | 9:00-10:00 | Close | Repository, release tag, license, contact. |
@@ -250,7 +258,11 @@ def main() -> None:
 
     args.docs_dir.mkdir(parents=True, exist_ok=True)
     metrics = _metrics(args.reports_dir, args.artifacts_dir)
-    _write_release_manifest(args.docs_dir / "release_manifest.md", args.reports_dir, args.artifacts_dir)
+    _write_release_manifest(
+        args.docs_dir / "release_manifest.md",
+        args.reports_dir,
+        args.artifacts_dir,
+    )
     _write_email(args.docs_dir / "submission_email.md", metrics, args.repo_url, args.demo_url)
     _write_demo_script(args.docs_dir / "demo_video_script.md")
     _write_report_outline(args.docs_dir / "final_report_outline.md", metrics)

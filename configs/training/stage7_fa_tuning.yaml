@@ -1,0 +1,21 @@
+__base__: ../defaults.yaml
+run_name: stage7_fa_tuning
+
+training:
+  stage: 7
+  batch_size: 256
+  num_epochs: 700
+  lr: 0.0005
+  weight_decay: 0.0001
+  warmup_steps: 0
+  precision: fp32
+  resume_from: checkpoints/stage6_final.pt
+
+# External FA roots must be provided here or via CLI. The README shows the Kaggle
+# roots used for the final successful run as examples.
+data:
+  external_common_voice_roots: []
+  external_librispeech_roots: []
+  external_background_noise_roots: []
+  external_urbansound_roots: []
+  external_fa_max_total_trials: 40000

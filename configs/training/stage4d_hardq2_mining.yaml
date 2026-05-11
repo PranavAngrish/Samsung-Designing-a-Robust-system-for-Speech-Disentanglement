@@ -1,0 +1,28 @@
+__base__: ../defaults.yaml
+run_name: stage4d_hardq2_mining
+
+training:
+  stage: 4
+  batch_size: 64
+  num_epochs: 1
+  lr: 0.000004
+  weight_decay: 0.00001
+  warmup_steps: 0
+  precision: fp32
+  resume_from: checkpoints/stage4_robust.pt
+
+stage4d:
+  wake_word: zero
+  n_enroll: 2
+  max_eval_profiles: 70
+  output_checkpoint: checkpoints/stage4d_hardq2_mining_balanced.pt
+  last_checkpoint: checkpoints/stage4d_hardq2_last.pt
+  production_checkpoint: checkpoints/stage4d_hardq2_production.pt
+  results_json: reports/stage4d_hardq2_results.json
+  replace_stage4_robust_on_accept: false
+  hard_q2_mining: true
+  mining_rounds: 2
+  q1_per_profile: 2
+  q2_per_profile: 6
+  q3_per_profile: 2
+  q4_per_profile: 2

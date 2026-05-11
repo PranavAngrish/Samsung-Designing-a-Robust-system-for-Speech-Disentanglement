@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 from pathlib import Path
 from typing import Any, cast
 
@@ -38,7 +39,7 @@ from solospeak.utils.types import LossDict, MetricsDict, StageBatch
 
 
 def _unit_vector(seed_text: str, dim: int = 128) -> NDArray[np.float32]:
-    seed = abs(hash(seed_text)) % (2**32)
+    seed = int(hashlib.sha256(seed_text.encode()).hexdigest(), 16) % (2**32)
     rng = np.random.default_rng(seed)
     vec = rng.standard_normal(dim).astype(np.float32)
     return vec / max(float(np.linalg.norm(vec)), 1e-8)
@@ -175,6 +176,13 @@ class Stage5(TrainingStage):
         )
 
     def run(self) -> Path:
+        if not is_smoke(self.config):
+            from solospeak.training.stages.stage5_notebook_search import (
+                run_stage5_notebook_search,
+            )
+
+            return run_stage5_notebook_search(self.config)
+
         (loader,) = self.prepare_data()
         self._loader = loader
         model = self.build_model()

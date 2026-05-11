@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from solospeak.training.stages.common import is_smoke, pass_or_raise
 from solospeak.training.stages.dual_head_base import DualHeadTrainingStage
 from solospeak.utils.types import MetricsDict
@@ -14,6 +16,15 @@ class Stage3(DualHeadTrainingStage):
     min_gate_threshold = 0.30
     target_gate_threshold = 0.60
     checkpoint_name = "stage3_disentangle.pt"
+
+    def run(self) -> Path:
+        if not is_smoke(self.config):
+            from solospeak.training.stages.stage3_notebook_search import (
+                run_stage3_notebook_search,
+            )
+
+            return run_stage3_notebook_search(self.config)
+        return super().run()
 
     def go_no_go_check(self, metrics: MetricsDict) -> tuple[bool, bool]:
         if is_smoke(self.config):
@@ -30,7 +41,10 @@ class Stage3(DualHeadTrainingStage):
                 min_threshold=self.min_gate_threshold,
                 target_threshold=self.target_gate_threshold,
             )
-        passed_min = reduction_c >= self.min_gate_threshold and reduction_s >= self.min_gate_threshold
+        passed_min = (
+            reduction_c >= self.min_gate_threshold
+            and reduction_s >= self.min_gate_threshold
+        )
         passed_target = (
             reduction_c >= self.target_gate_threshold and reduction_s >= self.target_gate_threshold
         )
@@ -40,4 +54,3 @@ class Stage3(DualHeadTrainingStage):
                 f"content={reduction_c:.4f}, speaker={reduction_s:.4f}"
             )
         return passed_min, passed_target
-

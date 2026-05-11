@@ -1,0 +1,25 @@
+__base__: ../defaults.yaml
+run_name: stage6_final_eval
+
+training:
+  stage: 6
+  batch_size: 128
+  num_epochs: 1
+  lr: 0.0
+  warmup_steps: 0
+  precision: fp32
+  resume_from: checkpoints/stage5_fusion.pt
+
+stage6:
+  test_kpi_manifest: data/manifests/test_kpi.csv
+  test_fa_manifest: data/manifests/test_fa.csv
+  output_checkpoint: checkpoints/stage6_final.pt
+  compatibility_checkpoint: checkpoints/stage6_final.pt
+  deployable_path: exports/solospeak_stage6_deployable.pt
+  metrics_json: reports/stage6_final_metrics.json
+  summary_json: reports/stage6_summary.json
+  test_scores_csv: reports/stage6_test_scores.csv
+  fa_scores_csv: reports/stage6_fa_scores.csv
+  threshold_diagnostic_csv: reports/stage6_threshold_diagnostic.csv
+  evaluate_noisy_q1: true
+  noisy_snrs: [-5, 0, 5, 10, 15, 20, 25, 30]

@@ -1,0 +1,1 @@
+These notebooks are the original experimental training logs used to produce the final SoloSpeak Stage 7 artifact. They are intentionally preserved as research notebooks. The cleaned repo provides evaluation, inference, and deployment scripts around the final exported artifact.

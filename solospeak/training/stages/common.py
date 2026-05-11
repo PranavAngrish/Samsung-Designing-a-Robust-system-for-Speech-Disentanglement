@@ -116,7 +116,10 @@ def save_checkpoint(
         payload["wrapper_state"] = dict(wrapper_state)
     if optimizer_state is not None:
         payload["optimizer_state"] = dict(optimizer_state)
+    payload["extra"] = dict(extra or {})
     if extra is not None:
+        # Compatibility for older notebook-style readers that looked for
+        # extra fields at the checkpoint top level.
         payload.update(dict(extra))
     torch.save(payload, path)
     update_latest(path)

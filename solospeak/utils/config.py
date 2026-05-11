@@ -81,7 +81,7 @@ class LossWeights(BaseModel):
 
 
 class TrainingConfig(BaseModel):
-    stage: Literal[1, 2, 3, 4, 5, 6]
+    stage: Literal[1, 2, 3, 4, 5, 6, 7]
     batch_size: int = 128
     num_epochs: int = 30
     optimizer: Literal["adamw", "sgd"] = "adamw"
@@ -108,6 +108,100 @@ class DataConfig(BaseModel):
     distance_range_m: tuple[float, float] = (0.5, 5.0)
     augmentation_prob: float = 0.8
     hard_neg_fraction: float = 0.3
+    external_common_voice_roots: list[Path] = Field(default_factory=list)
+    external_librispeech_roots: list[Path] = Field(default_factory=list)
+    external_background_noise_roots: list[Path] = Field(default_factory=list)
+    external_urbansound_roots: list[Path] = Field(default_factory=list)
+    external_fa_max_total_trials: int = 40000
+
+
+class Stage4DConfig(BaseModel):
+    """Notebook-faithful Stage 4D hard-Q2 mining settings."""
+
+    wake_word: str = "zero"
+    n_enroll: int = 2
+    max_eval_profiles: int = 70
+    output_checkpoint: Path = Path("checkpoints/stage4d_hardq2_mining_balanced.pt")
+    last_checkpoint: Path = Path("checkpoints/stage4d_hardq2_last.pt")
+    production_checkpoint: Path = Path("checkpoints/stage4d_hardq2_production.pt")
+    results_json: Path = Path("reports/stage4d_hardq2_results.json")
+    replace_stage4_robust_on_accept: bool = False
+    hard_q2_mining: bool = True
+    mining_rounds: int = 2
+    q1_per_profile: int = 2
+    q2_per_profile: int = 6
+    q3_per_profile: int = 2
+    q4_per_profile: int = 2
+
+
+class Stage5Config(BaseModel):
+    """Notebook-winning Stage 5 dual-candidate fusion search settings."""
+
+    reproduce_winner_only: bool = False
+    stage4_candidate_name: str = "stage4d_hardq2_mining_balanced"
+    stage4_candidate_checkpoint: Path = Path("checkpoints/stage4d_hardq2_mining_balanced.pt")
+    data_variant_name: str = "zero_e3_product"
+    wake_word: str = "zero"
+    n_enroll: int = 3
+    q1_per_profile: int = 2
+    q2_per_profile: int = 4
+    q3_per_profile: int = 2
+    q4_per_profile: int = 2
+    fusion_variant_name: str = "q2_very_strong"
+    lr: float = 0.0006
+    epochs: int = 700
+    patience: int = 100
+    batch_size: int = 256
+    weight_decay: float = 0.0001
+    q1_weight: float = 1.2
+    q2_weight: float = 4.0
+    q3_weight: float = 0.2
+    q4_weight: float = 0.2
+    pos_weight_scale: float = 0.8
+
+
+class Stage6Config(BaseModel):
+    """Final production evaluation/export settings. Stage 6 is not QAT."""
+
+    test_kpi_manifest: Path = Path("data/manifests/test_kpi.csv")
+    test_fa_manifest: Path = Path("data/manifests/test_fa.csv")
+    output_checkpoint: Path = Path("checkpoints/stage6_final.pt")
+    compatibility_checkpoint: Path = Path("checkpoints/stage6_final.pt")
+    deployable_path: Path = Path("exports/solospeak_stage6_deployable.pt")
+    metrics_json: Path = Path("reports/stage6_final_metrics.json")
+    summary_json: Path = Path("reports/stage6_summary.json")
+    test_scores_csv: Path = Path("reports/stage6_test_scores.csv")
+    fa_scores_csv: Path = Path("reports/stage6_fa_scores.csv")
+    threshold_diagnostic_csv: Path = Path("reports/stage6_threshold_diagnostic.csv")
+    evaluate_noisy_q1: bool = True
+    noisy_snrs: list[int] = Field(default_factory=lambda: [-5, 0, 5, 10, 15, 20, 25, 30])
+    recovery_fallback_to_last: bool = False
+
+
+class Stage7Config(BaseModel):
+    """External false-accept hard-negative tuning and corrected export settings."""
+
+    wake_word: str = "zero"
+    n_enroll: int = 3
+    max_profiles: int = 300
+    max_external_fa_trials: int = 40000
+    max_easy_external_negatives: int = 12000
+    stage7_checkpoint: Path = Path("checkpoints/stage7_fusion.pt")
+    final_checkpoint: Path = Path("checkpoints/stage7_final_corrected.pt")
+    deployable_path: Path = Path("exports/solospeak_stage7_deployable_corrected.pt")
+    external_manifest: Path = Path("reports/stage7_external_fa_manifest.csv")
+    stage6_external_scores: Path = Path("reports/stage7_external_fa_stage6_scores.csv")
+    stage7_external_scores: Path = Path("reports/stage7_external_fa_scores.csv")
+    external_summary: Path = Path("reports/stage7_external_fa_summary.json")
+    internal_scores: Path = Path("reports/stage7_final_internal_scores.csv")
+    joint_calibration_summary: Path = Path(
+        "reports/stage7_joint_threshold_calibration_summary.json"
+    )
+    final_kpi_verification: Path = Path("reports/stage7_final_kpi_verification.json")
+    external_fa_rate_max: float = 0.005
+    common_voice_fa_rate_max: float = 0.005
+    q2_rejection_min: float = 0.95
+    ta_clean_min: float = 0.92
 
 
 class SoloSpeakConfig(BaseModel):
@@ -121,6 +215,10 @@ class SoloSpeakConfig(BaseModel):
     losses: LossWeights = Field(default_factory=LossWeights)
     training: TrainingConfig
     data: DataConfig = Field(default_factory=DataConfig)
+    stage4d: Stage4DConfig = Field(default_factory=Stage4DConfig)
+    stage5: Stage5Config = Field(default_factory=Stage5Config)
+    stage6: Stage6Config = Field(default_factory=Stage6Config)
+    stage7: Stage7Config = Field(default_factory=Stage7Config)
 
     @classmethod
     def from_yaml(cls, path: Path | str) -> "SoloSpeakConfig":

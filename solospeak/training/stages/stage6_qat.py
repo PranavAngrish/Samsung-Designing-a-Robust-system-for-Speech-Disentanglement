@@ -14,7 +14,6 @@ from solospeak.data.features import LogMelExtractor
 from solospeak.models.solospeak import SoloSpeakModel
 from solospeak.training.stages.base import TrainingStage
 from solospeak.training.stages.common import (
-    checkpoint_path,
     default_device,
     inject_class_counts,
     is_smoke,
@@ -100,23 +99,41 @@ class Stage6(TrainingStage):
         return metrics
 
     def go_no_go_check(self, metrics: MetricsDict) -> tuple[bool, bool]:
-        return pass_or_raise(
-            stage_name=self.stage_name,
-            smoke=is_smoke(self.config),
-            metrics=metrics,
-            metric_name=self.min_gate_metric,
-            min_threshold=self.min_gate_threshold,
-            target_threshold=self.target_gate_threshold,
-        )
+        if is_smoke(self.config):
+            metrics["gate/smoke_only"] = 1.0
+            return True, True
+
+        value = metrics.get(self.min_gate_metric)
+
+        if value is None:
+            raise RuntimeError(
+                f"{self.stage_name}: missing gate metric {self.min_gate_metric!r}"
+            )
+
+        passed_min = value <= self.min_gate_threshold
+        passed_target = value <= self.target_gate_threshold
+
+        if not passed_min:
+            raise RuntimeError(
+                f"{self.stage_name}: MIN gate failed for {self.min_gate_metric}: "
+                f"{value:.4f} > {self.min_gate_threshold:.4f}"
+            )
+
+        return passed_min, passed_target
 
     def run(self) -> Path:
+        if not is_smoke(self.config):
+            from solospeak.training.stages.stage6_final_eval import run_stage6_final_eval
+
+            return run_stage6_final_eval(self.config)
+
         self.prepare_data()
         self.build_model()
         last_metrics = self.on_epoch_end(0)
         self.go_no_go_check(last_metrics)
         assert self.model is not None
-        return save_checkpoint(
-            checkpoint_path(self.config, "stage6_qat.pt"),
+        path = save_checkpoint(
+            self.config.stage6.output_checkpoint,
             stage_origin=self.stage_id,
             config=self.config,
             step=self.step,
@@ -128,4 +145,18 @@ class Stage6(TrainingStage):
                 "converted_int8_pytorch": False,
             },
         )
-
+        if self.config.stage6.compatibility_checkpoint != self.config.stage6.output_checkpoint:
+            save_checkpoint(
+                self.config.stage6.compatibility_checkpoint,
+                stage_origin=self.stage_id,
+                config=self.config,
+                step=self.step,
+                metrics=last_metrics,
+                model_state=self.model.state_dict(),
+                extra={
+                    "qat_trained": True,
+                    "contains_fake_quant_modules": False,
+                    "converted_int8_pytorch": False,
+                },
+            )
+        return path

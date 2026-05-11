@@ -1,16 +1,52 @@
 # Release Manifest
 
-Tag: `v1.0.0-phase2`
+Large checkpoints and deployable model files are not committed to git. Attach them to a
+GitHub Release or Kaggle Dataset and keep this manifest updated with SHA-256 values from
+the released files.
 
-| Artifact | Size | SHA-256 |
-|---|---:|---|
-| stage6_qat.pt | 4.267 MB | `452464cc147efe093e8eca4f85d9acbf2b8e9f0926162e5cef62fcb69107bf9e` |
-| solospeak_int8.onnx | 1.467 MB | `0c8f80130c11e34e2b85c0b29cea8c23b75b6824dd38bba4ddab1744684fea9f` |
-| solospeak_int8_previous.onnx | 1.467 MB | `0c8f80130c11e34e2b85c0b29cea8c23b75b6824dd38bba4ddab1744684fea9f` |
-| kpi_final.json | 0.002 MB | `e117ab507198e4643e43692891386ae56b96a3092cd0c750c732476f02faac6d` |
-| probes.json | 0.000 MB | `9bd20ade8a490c7151e9e97154d3299c091df443e6de6bcb1dfb1822850d7467` |
-| ablation_table.md | 0.001 MB | `2dc7495f772b09b38ad10649c5a7eaae645acbec1f2dbac6fe364b8edd3bce42` |
-| subgroup_report.md | 0.000 MB | `d589d63a5160120b38b7c70a0c5736c6d9e8121f848a80a06eaa0d0d0f4aefb2` |
+## Final Production Artifacts
 
-Attach these files to the GitHub Release. Do not commit checkpoints or ONNX
-artifacts to git.
+| Artifact | Role | SHA-256 |
+|---|---|---|
+| `exports/solospeak_stage7_deployable_corrected.pt` | Final recommended deployable, `tau_on ~= 0.27` | `TBD_AFTER_RELEASE` |
+| `checkpoints/stage7_final_corrected.pt` | Full corrected Stage 7 checkpoint | `TBD_AFTER_RELEASE` |
+| `checkpoints/stage7_fusion.pt` | Stage 7 fusion-head tuned checkpoint before joint tau correction | `TBD_AFTER_RELEASE` |
+| `checkpoints/stage6_final.pt` | Stage 6 final evaluation/export checkpoint | `TBD_AFTER_RELEASE` |
+| `checkpoints/stage5_fusion.pt` | Stage 5 best fusion checkpoint | `TBD_AFTER_RELEASE` |
+| `checkpoints/stage4d_hardq2_mining_balanced.pt` | Stage 4D hard-Q2 mining checkpoint used by Stage 5 | `TBD_AFTER_RELEASE` |
+
+## Validation Files
+
+| Report | Expected Location |
+|---|---|
+| Production pipeline summary | `reports/production_pipeline_summary.json` |
+| Joint threshold calibration | `reports/stage7_joint_threshold_calibration_summary.json` |
+| Final KPI verification | `reports/stage7_final_kpi_verification.json` |
+| Stage 7 external FA summary | `reports/stage7_external_fa_summary.json` |
+
+## Expected Final Metrics
+
+```text
+tau_on: 0.27
+TA clean: 93.97%
+Q2 rejection: 95.17%
+Q3 rejection: 97.83%
+Q4 rejection: 100.00%
+External FA rate: 0.300%
+External FA count: 120 / 40000
+Parameters: 1,100,897
+```
+
+## Validate A Release Artifact
+
+```bash
+python - <<'PY'
+import torch
+obj = torch.load("exports/solospeak_stage7_deployable_corrected.pt", map_location="cpu")
+assert abs(float(obj["tau_on"]) - 0.27) <= 0.03
+print("tau_on =", obj["tau_on"])
+PY
+```
+
+The uncorrected `exports/solospeak_stage7_deployable.pt` is an intermediate artifact.
+It is not the final recommended model.

@@ -67,6 +67,7 @@ class Stage1(TrainingStage):
 
     def prepare_data(self) -> tuple[DataLoader[Any], ...]:
         batch_size = smoke_batch_size(self.config)
+        num_workers = 0 if is_smoke(self.config) else self.config.training.num_workers
         train_path = self.config.data.manifests_dir / "train_gsc.csv"
         dev_path = self.config.data.manifests_dir / "dev_gsc.csv"
         if not dev_path.exists() or dev_path.stat().st_size <= len("file_path\n"):
@@ -77,14 +78,18 @@ class Stage1(TrainingStage):
             train,
             batch_size=batch_size,
             shuffle=True,
-            num_workers=0,
+            num_workers=num_workers,
+            pin_memory=num_workers > 0,
+            persistent_workers=num_workers > 0,
             collate_fn=collate_gsc,
         )
         dev_loader = DataLoader(
             dev,
             batch_size=batch_size,
             shuffle=False,
-            num_workers=0,
+            num_workers=num_workers,
+            pin_memory=num_workers > 0,
+            persistent_workers=num_workers > 0,
             collate_fn=collate_gsc,
         )
         return train_loader, dev_loader
@@ -158,7 +163,10 @@ class Stage1(TrainingStage):
                 optimizer.zero_grad(set_to_none=True)
                 loss = self.compute_loss({"gsc": batch}, self.step)["total"]
                 backward(loss)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), self.config.training.max_grad_norm)
+                torch.nn.utils.clip_grad_norm_(
+                    model.parameters(),
+                    self.config.training.max_grad_norm,
+                )
                 optimizer.step()
                 self.step += 1
                 if max_steps is not None and self.step >= max_steps:
@@ -167,8 +175,18 @@ class Stage1(TrainingStage):
             if max_steps is not None and self.step >= max_steps:
                 break
 
-        self.go_no_go_check(last_metrics)
         assert self.model is not None
+        save_checkpoint(
+            checkpoint_path(self.config, "stage1_last.pt"),
+            stage_origin=self.stage_id,
+            config=self.config,
+            step=self.step,
+            metrics=last_metrics,
+            model_state=self.model.backbone.state_dict(),
+            optimizer_state=optimizer.state_dict(),
+            extra={"backbone_state": self.model.backbone.state_dict(), "gate_checked": False},
+        )
+        self.go_no_go_check(last_metrics)
         return save_checkpoint(
             checkpoint_path(self.config, "stage1_backbone.pt"),
             stage_origin=self.stage_id,

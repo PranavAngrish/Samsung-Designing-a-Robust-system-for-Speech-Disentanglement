@@ -1,4 +1,4 @@
-"""PCM/WAV/FLAC audio helpers."""
+"""PCM/WAV/FLAC/MP3 audio helpers."""
 
 from __future__ import annotations
 
@@ -13,7 +13,13 @@ from solospeak.utils.types import FloatArray
 
 def load_audio(path: Path | str, target_sr: int = 16000) -> FloatArray:
     """Load audio file, resample if needed, return float32 mono array in [-1, 1]."""
-    audio, sr = sf.read(str(path), dtype="float32", always_2d=False)
+    try:
+        audio, sr = sf.read(str(path), dtype="float32", always_2d=False)
+    except Exception:
+        import librosa
+
+        audio, sr = librosa.load(str(path), sr=target_sr, mono=True)
+    audio = np.asarray(audio, dtype=np.float32)
     if audio.ndim > 1:
         audio = audio.mean(axis=1)
     if sr != target_sr:
@@ -28,18 +34,24 @@ def load_wav(path: Path | str, target_sr: int = 16000) -> FloatArray:
     return load_audio(path, target_sr)
 
 
-def load_audio_segment(
-    path: Path | str,
-    start_s: float,
-    end_s: float,
-    target_sr: int = 16000,
-) -> FloatArray:
-    """Load a mono waveform segment after resampling to ``target_sr``."""
+# def load_audio_segment(
+#     path: Path | str,
+#     start_s: float,
+#     end_s: float,
+#     target_sr: int = 16000,
+# ) -> FloatArray:
+#     """Load a mono waveform segment after resampling to ``target_sr``."""
+#     wav = load_audio(path, target_sr)
+#     start = max(0, int(round(start_s * target_sr)))
+#     end = int(round(end_s * target_sr)) if end_s > 0 else len(wav)
+#     end = min(len(wav), max(start, end))
+#     return np.asarray(wav[start:end], dtype=np.float32)
+
+def load_audio_segment(path, start_s, duration_s, target_sr=16000):
     wav = load_audio(path, target_sr)
     start = max(0, int(round(start_s * target_sr)))
-    end = int(round(end_s * target_sr)) if end_s > 0 else len(wav)
-    end = min(len(wav), max(start, end))
-    return np.asarray(wav[start:end], dtype=np.float32)
+    end = min(len(wav), start + int(round(duration_s * target_sr)))
+    return wav[start:end].astype(np.float32)
 
 
 def save_audio(path: Path, audio: FloatArray, sr: int = 16000) -> None:

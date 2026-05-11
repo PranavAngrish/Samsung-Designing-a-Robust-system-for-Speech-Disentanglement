@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+
+os.environ.setdefault("NUMBA_CACHE_DIR", "/private/tmp/numba_cache")
 
 import pytest
 import torch

@@ -8,28 +8,29 @@ version = "0.1.0"
 description = "Speaker-personalized custom wake-word detection"
 readme = "README.md"
 license = {file = "LICENSE"}
-requires-python = ">=3.10,<3.12"
+requires-python = ">=3.10"
 authors = [{name = "Pranav Angrish", email = "pangrish_be22@thapar.edu"}]
 
 dependencies = [
-    "torch==2.3.1",
-    "torchaudio==2.3.1",
-    "numpy==1.26.4",
-    "scipy==1.13.1",
-    "librosa==0.10.2",
-    "soundfile==0.12.1",
-    "lmdb==1.5.1",
-    "onnx==1.16.0",
-    "onnxruntime==1.18.0",
-    "onnxsim==0.4.36",
-    "pyyaml==6.0.1",
-    "pydantic==2.7.1",
-    "tqdm==4.66.4",
-    "pandas==2.2.2",
-    "scikit-learn==1.5.0",
-    "wandb==0.17.0",
-    "g2p-en==2.1.0",
-    "speechbrain==1.0.3",
+    "torch>=2.3.1",
+    "torchaudio>=2.3.1",
+    "numpy>=1.26.4",
+    "scipy>=1.13.1",
+    "librosa>=0.10.2",
+    "soundfile>=0.12.1",
+    "lmdb>=1.5.1",
+    "onnx>=1.16.0",
+    "onnxruntime>=1.18.0",
+    "onnxscript>=0.1.0",
+    "onnxsim>=0.4.36",
+    "pyyaml>=6.0.1",
+    "pydantic>=2.7.1",
+    "tqdm>=4.66.4",
+    "pandas>=2.2.2",
+    "scikit-learn>=1.5.0",
+    "wandb>=0.17.0",
+    "g2p-en>=2.1.0",
+    "speechbrain>=1.0.3",
 ]
 
 [project.optional-dependencies]
@@ -53,6 +54,7 @@ demo = [
 
 [project.scripts]
 solospeak-train = "scripts.run_stage:main"
+solospeak-production = "scripts.run_production_pipeline:main"
 solospeak-eval = "scripts.run_eval:main"
 solospeak-export = "scripts.export_and_validate:main"
 
