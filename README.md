@@ -483,29 +483,6 @@ Important regression tests lock the final corrected calibration behavior:
 
 ---
 
-## Pitch Deck Summary
-
-The companion pitch deck presents SoloSpeak as a **premium conceptual sketch blueprint** for a privacy-first Samsung voice AI system.
-
-Slide narrative:
-
-1. **SoloSpeak cover** - personalized wake-word detection for Samsung devices
-2. **Problem** - today's devices listen for the phrase, not the person behind it
-3. **Proposed solution** - enroll once, wake only for the enrolled voice
-4. **Runtime inference architecture** - mic audio to dual embeddings to fusion decision
-5. **Training journey** - seven reliability layers from pretraining to export
-6. **Deployment & scalability** - one lightweight model, many personalized devices
-7. **Open data usage map** - public data trains the base model; enrollment builds personal templates
-8. **Open model usage map** - VAD, ONNX/INT8, and offline speaker support around SoloSpeak Stage 7
-9. **Competitive edge** - phrase+speaker verification, disentanglement, hard-Q2 mining, hysteresis, lightweight runtime
-10. **Prototype proof** - built, trained, evaluated, exported, with final metrics
-11. **Closing** - private-by-design Samsung ecosystem fit
-
-The deck's key message:
-
-> **SoloSpeak makes wake-word detection personal, private, and device-ready.**
-
----
 
 ## Notebook Provenance
 
@@ -526,26 +503,6 @@ exports/solospeak_stage7_deployable_corrected.pt
 ```
 
 Do **not** treat any external-only `tau ~= 0.935` export as final.
-
----
-
-## Release Checklist
-
-Before sharing the repository publicly:
-
-- [ ] Attach `exports/solospeak_stage7_deployable_corrected.pt` to a GitHub Release or Kaggle Dataset.
-- [ ] Attach final reports from `reports/`.
-- [ ] Verify the SHA-256 hashes in `docs/release_manifest.md`.
-- [ ] Confirm the repository URL in the deck and README.
-- [ ] Replace any placeholder Silero VAD artifact in `artifacts/` with the real pinned ONNX file.
-- [ ] Run `pytest tests/regression -v`.
-- [ ] Mention that the prototype is production-candidate, not field-certified.
-
-Recommended release tag:
-
-```text
-v1.0.0-stage7-corrected
-```
 
 ---
 
